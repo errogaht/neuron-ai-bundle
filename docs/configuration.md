@@ -78,6 +78,8 @@ neuron_ai:
 
 The class must implement `NeuronAI\Agent\AgentInterface`. Its constructor is autowired. Every configured agent is non-shared, and every listed tool is cloned before attachment.
 
+Each `tools` item may reference a native `ToolInterface`, a native `ToolkitInterface`, or the bundle's attribute-driven `AbstractToolGroup`. A tool group expands all of its `#[Tool]` methods when Neuron bootstraps the agent.
+
 Named aliases are generated as follows:
 
 | Configuration key | Autowired argument |

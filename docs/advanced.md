@@ -25,6 +25,44 @@ neuron_ai:
 
 The bundle constructs `AnalystAgent`, then applies the configured Neuron provider, instructions, tools and observers.
 
+## Tool groups
+
+`AbstractToolGroup` implements Neuron's native `ToolkitInterface`. It is useful when one domain service owns several related operations and separate invokable classes would add boilerplate.
+
+Only public methods carrying `#[Tool]` are exposed. Other public service methods remain invisible to the model. The group supports:
+
+- inferred `string`, `int`, `float`, `bool` and `array` schemas;
+- `int|float` as a numeric schema;
+- backed enums, including automatic enum values and invocation conversion;
+- nullable and default parameters;
+- descriptions, explicit schema types, enum overrides and required overrides through `#[ToolParameter]`;
+- tool-level `maxRuns`;
+- toolkit `guidelines()`, `only()`, `exclude()` and `with()` from Neuron.
+
+```php
+final class CustomerTools extends AbstractToolGroup
+{
+    public function __construct(private CustomerService $customers)
+    {
+    }
+
+    #[Tool(description: 'Read the current customer profile.')]
+    public function profile(): array
+    {
+        return $this->customers->currentProfile();
+    }
+
+    #[Tool(description: 'Update the customer timezone.', maxRuns: 1)]
+    public function changeTimezone(
+        #[ToolParameter(description: 'IANA timezone identifier')] string $timezone,
+    ): array {
+        return $this->customers->changeCurrentTimezone($timezone);
+    }
+}
+```
+
+Authorization and tenant filtering must remain inside the injected domain service. Tool attributes describe capabilities to the model; they do not authorize the operation.
+
 ## Dynamic history and tenant context
 
 An `AgentConfiguratorInterface` runs after static YAML configuration for every fresh agent. Use its `AgentContext` for thread IDs and serializable attributes:

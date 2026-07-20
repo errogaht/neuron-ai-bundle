@@ -169,6 +169,60 @@ neuron_ai:
 
 Autoconfiguration is not magic discovery: only tools explicitly listed on an agent are exposed to that model. This keeps the capability boundary reviewable.
 
+## Multiple tools in one service
+
+For a cohesive group of operations, extend `AbstractToolGroup` and expose selected public methods with attributes. Constructor dependencies are autowired exactly like any other Symfony service:
+
+```php
+<?php
+
+namespace App\Ai\Tool;
+
+use App\Repository\OrderRepository;
+use Errogaht\NeuronAiBundle\Tool\AbstractToolGroup;
+use Errogaht\NeuronAiBundle\Tool\Attribute\Tool;
+use Errogaht\NeuronAiBundle\Tool\Attribute\ToolParameter;
+
+final class OrderTools extends AbstractToolGroup
+{
+    public function __construct(private readonly OrderRepository $orders)
+    {
+    }
+
+    #[Tool(description: 'Find an order visible to the current user.')]
+    public function findOrder(
+        #[ToolParameter(description: 'Public order number')] string $number,
+        #[ToolParameter(enum: ['short', 'full'])] string $format = 'short',
+    ): array {
+        return $this->orders->findVisibleSummary($number, $format);
+    }
+
+    #[Tool(name: 'change_delivery_address', description: 'Change delivery before dispatch.', maxRuns: 1)]
+    public function changeDeliveryAddress(string $number, string $address): array
+    {
+        return $this->orders->changeVisibleOrderAddress($number, $address);
+    }
+
+    public function guidelines(): ?string
+    {
+        return 'Always find the order before attempting a change.';
+    }
+}
+```
+
+Connect the whole group with one service ID:
+
+```yaml
+neuron_ai:
+    agents:
+        order_manager:
+            provider: main
+            tools:
+                - App\Ai\Tool\OrderTools
+```
+
+The group is a native Neuron toolkit. Method names become `snake_case` unless `name` is provided. Schema types and required fields are inferred from PHP scalar/array types, nullable/default parameters, and backed enums. Use `#[ToolParameter]` for descriptions, explicit `PropertyType`, enum values or a required override. Complex DTO schemas should use a native Neuron `Tool` class.
+
 ## Custom agents and all Neuron features
 
 Set `class` to your own `AgentInterface` implementation or subclass. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:
