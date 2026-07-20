@@ -93,9 +93,9 @@ Keep authorization in trusted application code. Context attributes are routing i
 
 ## RAG, embeddings and vector stores
 
-Register Neuron embedding providers, vector stores, data loaders and RAG dependencies under `services:` as normal Symfony services. Inject them into your RAG agent subclass and reference that class from `neuron_ai.agents`.
+Built-in embedding providers and vector stores can be configured under `neuron_ai.rag`; every configured component receives a named autowiring alias. Use `type: service` for custom or client-backed Neuron adapters. Named loader pipelines can be executed through `RagIndexer` or `neuron-ai:rag:index`.
 
-This design avoids duplicating Neuron's rapidly evolving adapter configuration and allows third-party adapters to work immediately through autowiring.
+Retrieval, pre-processors, post-processors, splitters, readers and application data loaders remain ordinary Symfony services. This keeps custom retrieval policy and tenant filtering in application code while allowing third-party adapters to work immediately through autowiring.
 
 ## Workflows and persistence
 

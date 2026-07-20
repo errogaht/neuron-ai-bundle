@@ -6,9 +6,15 @@ namespace Errogaht\NeuronAiBundle\Agent;
 
 use Errogaht\NeuronAiBundle\Integration\DoctrineMcp\DoctrineMcpToolProvider;
 use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
+use Errogaht\NeuronAiBundle\Rag\EmbeddingProviderRegistry;
+use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
 use NeuronAI\Agent\Agent;
 use NeuronAI\Agent\AgentInterface;
 use NeuronAI\Observability\ObserverInterface;
+use NeuronAI\RAG\PostProcessor\PostProcessorInterface;
+use NeuronAI\RAG\PreProcessor\PreProcessorInterface;
+use NeuronAI\RAG\RAG;
+use NeuronAI\RAG\Retrieval\RetrievalInterface;
 use Psr\Container\ContainerInterface;
 
 /** Builds non-shared agents and applies static YAML plus dynamic Symfony configurators. */
@@ -28,6 +34,9 @@ final class AgentFactory
         private readonly iterable $observers,
         private readonly ?string $defaultAgent = null,
         private readonly ?ContainerInterface $integrations = null,
+        private readonly ?EmbeddingProviderRegistry $embeddingProviders = null,
+        private readonly ?VectorStoreRegistry $vectorStores = null,
+        private readonly ?ContainerInterface $ragComponents = null,
     ) {
     }
 
@@ -64,6 +73,9 @@ final class AgentFactory
                 $agent->parallelToolCalls((bool) $config['parallel_tool_calls']);
             }
         }
+        if (($config['rag']['enabled'] ?? false) === true) {
+            $this->configureRag($agent, $config['rag']);
+        }
         foreach ((array) $config['tools'] as $toolId) {
             $tool = $this->tools->get((string) $toolId);
             $agent->addTool(\is_object($tool) ? clone $tool : $tool);
@@ -93,6 +105,52 @@ final class AgentFactory
         }
 
         return $agent;
+    }
+
+    /** @param array<string, mixed> $config */
+    private function configureRag(AgentInterface $agent, array $config): void
+    {
+        if (!$agent instanceof RAG) {
+            throw new \LogicException(\sprintf('Agent "%s" enables RAG but does not extend %s.', $agent::class, RAG::class));
+        }
+        if (null === $this->embeddingProviders || null === $this->vectorStores || null === $this->ragComponents) {
+            throw new \LogicException('RAG services are unavailable in the compiled container.');
+        }
+
+        $agent->setEmbeddingsProvider($this->embeddingProviders->get((string) $config['embeddings']));
+        $agent->setVectorStore($this->vectorStores->fresh((string) $config['vector_store']));
+        if (null !== $config['retrieval']) {
+            $retrieval = $this->ragComponents->get((string) $config['retrieval']);
+            if (!$retrieval instanceof RetrievalInterface) {
+                throw new \LogicException(\sprintf('RAG retrieval service "%s" must implement %s.', $config['retrieval'], RetrievalInterface::class));
+            }
+            // Custom retrieval services own their Symfony scope; use shared: false when they carry per-query state.
+            $agent->setRetrieval($retrieval);
+        }
+
+        $agent->setPreProcessors($this->ragComponents($config['pre_processors'], PreProcessorInterface::class));
+        $agent->setPostProcessors($this->ragComponents($config['post_processors'], PostProcessorInterface::class));
+    }
+
+    /**
+     * @param class-string<T> $interface
+     *
+     * @return list<T>
+     *
+     * @template T of object
+     */
+    private function ragComponents(mixed $serviceIds, string $interface): array
+    {
+        $components = [];
+        foreach ($this->stringList($serviceIds) as $serviceId) {
+            $component = $this->ragComponents?->get($serviceId);
+            if (!$component instanceof $interface) {
+                throw new \LogicException(\sprintf('RAG service "%s" must implement %s.', $serviceId, $interface));
+            }
+            $components[] = $component;
+        }
+
+        return $components;
     }
 
     /**

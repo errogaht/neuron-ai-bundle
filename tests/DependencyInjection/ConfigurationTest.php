@@ -25,6 +25,10 @@ final class ConfigurationTest extends TestCase
         self::assertFalse($config['agents']['assistant']['doctrine_mcp']['enabled']);
         self::assertSame([], $config['agents']['assistant']['doctrine_mcp']['only']);
         self::assertSame([], $config['agents']['assistant']['doctrine_mcp']['exclude']);
+        self::assertFalse($config['agents']['assistant']['rag']['enabled']);
+        self::assertSame([], $config['rag']['embeddings']);
+        self::assertSame([], $config['rag']['vector_stores']);
+        self::assertSame([], $config['rag']['pipelines']);
         self::assertFalse($config['messenger']['enabled']);
     }
 
@@ -46,5 +50,32 @@ final class ConfigurationTest extends TestCase
         self::assertTrue($config['agents']['assistant']['doctrine_mcp']['enabled']);
         self::assertSame(['doctrine_get', 'doctrine_update'], $config['agents']['assistant']['doctrine_mcp']['only']);
         self::assertSame(['doctrine_delete'], $config['agents']['assistant']['doctrine_mcp']['exclude']);
+    }
+
+    public function testRagComponentsAndPipelineAreNormalized(): void
+    {
+        // Scenario: one YAML graph provides named embeddings, a vector engine, and a repeatable loader pipeline.
+        $config = (new Processor())->processConfiguration(new Configuration(), [[
+            'rag' => [
+                'default_embeddings' => 'knowledge',
+                'default_vector_store' => 'knowledge',
+                'embeddings' => [
+                    'knowledge' => ['type' => 'openai_like', 'base_url' => 'https://ai.example/v1', 'model' => 'embed'],
+                ],
+                'vector_stores' => [
+                    'knowledge' => ['type' => 'qdrant', 'collection_url' => 'http://qdrant/collections/docs'],
+                ],
+                'pipelines' => [
+                    'docs' => ['loaders' => ['app.rag.docs_loader']],
+                ],
+            ],
+            'agents' => [
+                'knowledge' => ['class' => \NeuronAI\RAG\RAG::class, 'rag' => ['enabled' => true]],
+            ],
+        ]]);
+
+        self::assertSame(1024, $config['rag']['vector_stores']['knowledge']['dimensions']);
+        self::assertSame(50, $config['rag']['pipelines']['docs']['chunk_size']);
+        self::assertTrue($config['agents']['knowledge']['rag']['enabled']);
     }
 }

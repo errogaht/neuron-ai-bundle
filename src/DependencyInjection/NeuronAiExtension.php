@@ -13,6 +13,9 @@ use Errogaht\NeuronAiBundle\Command\AgentRunCommand;
 use Errogaht\NeuronAiBundle\Command\AgentStatusCommand;
 use Errogaht\NeuronAiBundle\Integration\DoctrineMcp\DoctrineMcpToolProvider;
 use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
+use Errogaht\NeuronAiBundle\Rag\EmbeddingProviderRegistry;
+use Errogaht\NeuronAiBundle\Rag\RagIndexer;
+use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
 use NeuronAI\Agent\AgentInterface;
 use NeuronAI\Providers\AIProviderInterface;
 use Symfony\Component\Config\FileLocator;
@@ -62,6 +65,58 @@ final class NeuronAiExtension extends Extension
             new ServiceLocatorArgument($providerReferences),
             $config['default_provider'],
         ]);
+
+        $embeddingReferences = [];
+        foreach ($config['rag']['embeddings'] as $embeddingConfig) {
+            if ('service' === $embeddingConfig['type']) {
+                $embeddingReferences[(string) $embeddingConfig['service']] = new Reference((string) $embeddingConfig['service']);
+            }
+        }
+        $container->getDefinition(EmbeddingProviderRegistry::class)->setArguments([
+            $config['rag']['embeddings'],
+            new ServiceLocatorArgument($embeddingReferences),
+            $config['rag']['default_embeddings'],
+        ]);
+
+        $vectorStoreReferences = [];
+        foreach ($config['rag']['vector_stores'] as $vectorStoreConfig) {
+            if ('service' === $vectorStoreConfig['type']) {
+                $vectorStoreReferences[(string) $vectorStoreConfig['service']] = new Reference((string) $vectorStoreConfig['service']);
+            }
+        }
+        $container->getDefinition(VectorStoreRegistry::class)->setArguments([
+            $config['rag']['vector_stores'],
+            new ServiceLocatorArgument($vectorStoreReferences),
+            $config['rag']['default_vector_store'],
+        ]);
+
+        $loaderReferences = [];
+        foreach ($config['rag']['pipelines'] as $pipeline) {
+            foreach ($pipeline['loaders'] as $loaderId) {
+                $loaderReferences[(string) $loaderId] = new Reference((string) $loaderId);
+            }
+        }
+        $container->getDefinition(RagIndexer::class)->setArguments([
+            $config['rag']['pipelines'],
+            new Reference(EmbeddingProviderRegistry::class),
+            new Reference(VectorStoreRegistry::class),
+            new ServiceLocatorArgument($loaderReferences),
+        ]);
+
+        $ragComponentReferences = [];
+        foreach ($config['agents'] as $agentConfig) {
+            if (($agentConfig['rag']['enabled'] ?? false) !== true) {
+                continue;
+            }
+            foreach (['pre_processors', 'post_processors'] as $componentList) {
+                foreach ($agentConfig['rag'][$componentList] as $serviceId) {
+                    $ragComponentReferences[(string) $serviceId] = new Reference((string) $serviceId);
+                }
+            }
+            if (null !== $agentConfig['rag']['retrieval']) {
+                $ragComponentReferences[(string) $agentConfig['rag']['retrieval']] = new Reference((string) $agentConfig['rag']['retrieval']);
+            }
+        }
         $doctrineMcpEnabled = $this->usesDoctrineMcp($config);
         if ($doctrineMcpEnabled) {
             $this->registerDoctrineMcp($container);
@@ -77,9 +132,13 @@ final class NeuronAiExtension extends Extension
             new TaggedIteratorArgument('neuron_ai.observer'),
             $config['default_agent'],
             new ServiceLocatorArgument($integrations),
+            new Reference(EmbeddingProviderRegistry::class),
+            new Reference(VectorStoreRegistry::class),
+            new ServiceLocatorArgument($ragComponentReferences),
         ]);
 
         $this->registerNamedRuntimeServices($container, $config);
+        $this->registerNamedRagServices($container, $config['rag']);
 
         if ($config['messenger']['enabled']) {
             $this->registerMessenger($container, $config['messenger']);
@@ -152,6 +211,33 @@ final class NeuronAiExtension extends Extension
     }
 
     /** @param array<string, mixed> $config */
+    private function registerNamedRagServices(ContainerBuilder $container, array $config): void
+    {
+        foreach (array_keys($config['embeddings']) as $name) {
+            $id = 'neuron_ai.configured_embeddings.'.$name;
+            $container->setDefinition($id, (new Definition(\NeuronAI\RAG\Embeddings\EmbeddingsProviderInterface::class))
+                ->setFactory([new Reference(EmbeddingProviderRegistry::class), 'get'])
+                ->setArguments([$name]));
+            $container->registerAliasForArgument($id, \NeuronAI\RAG\Embeddings\EmbeddingsProviderInterface::class, $this->argumentName((string) $name, 'embeddings'));
+        }
+        foreach (array_keys($config['vector_stores']) as $name) {
+            $id = 'neuron_ai.configured_vector_store.'.$name;
+            $container->setDefinition($id, (new Definition(\NeuronAI\RAG\VectorStore\VectorStoreInterface::class))
+                ->setFactory([new Reference(VectorStoreRegistry::class), 'fresh'])
+                ->setArguments([$name])
+                ->setShared(false));
+            $container->registerAliasForArgument($id, \NeuronAI\RAG\VectorStore\VectorStoreInterface::class, $this->argumentName((string) $name, 'vectorStore'));
+        }
+
+        if (null !== $config['default_embeddings']) {
+            $container->setAlias(\NeuronAI\RAG\Embeddings\EmbeddingsProviderInterface::class, 'neuron_ai.configured_embeddings.'.$config['default_embeddings']);
+        }
+        if (null !== $config['default_vector_store']) {
+            $container->setAlias(\NeuronAI\RAG\VectorStore\VectorStoreInterface::class, 'neuron_ai.configured_vector_store.'.$config['default_vector_store']);
+        }
+    }
+
+    /** @param array<string, mixed> $config */
     private function validate(array &$config): void
     {
         if (null !== $config['default_provider'] && !isset($config['providers'][$config['default_provider']])) {
@@ -163,6 +249,7 @@ final class NeuronAiExtension extends Extension
                 throw new InvalidArgumentException(\sprintf('Provider "%s" of type service requires the service option.', $name));
             }
         }
+        $this->validateRag($config['rag']);
         foreach ($config['agents'] as $name => &$agent) {
             $agent['provider'] ??= $config['default_provider'];
             if (null === $agent['provider'] || !isset($config['providers'][$agent['provider']])) {
@@ -171,8 +258,53 @@ final class NeuronAiExtension extends Extension
             if (!is_a((string) $agent['class'], AgentInterface::class, true)) {
                 throw new InvalidArgumentException(\sprintf('Agent class "%s" must implement %s.', $agent['class'], AgentInterface::class));
             }
+            if (($agent['rag']['enabled'] ?? false) === true) {
+                if (!is_a((string) $agent['class'], \NeuronAI\RAG\RAG::class, true)) {
+                    throw new InvalidArgumentException(\sprintf('RAG agent class "%s" must extend %s.', $agent['class'], \NeuronAI\RAG\RAG::class));
+                }
+                $agent['rag']['embeddings'] ??= $config['rag']['default_embeddings'];
+                $agent['rag']['vector_store'] ??= $config['rag']['default_vector_store'];
+                $this->requireRagReference($agent['rag']['embeddings'], $config['rag']['embeddings'], 'embedding provider', (string) $name);
+                $this->requireRagReference($agent['rag']['vector_store'], $config['rag']['vector_stores'], 'vector store', (string) $name);
+            }
         }
         unset($agent);
+    }
+
+    /** @param array<string, mixed> $config */
+    private function validateRag(array &$config): void
+    {
+        if (null !== $config['default_embeddings'] && !isset($config['embeddings'][$config['default_embeddings']])) {
+            throw new InvalidArgumentException(\sprintf('Unknown rag.default_embeddings "%s".', $config['default_embeddings']));
+        }
+        if (null !== $config['default_vector_store'] && !isset($config['vector_stores'][$config['default_vector_store']])) {
+            throw new InvalidArgumentException(\sprintf('Unknown rag.default_vector_store "%s".', $config['default_vector_store']));
+        }
+        foreach ($config['embeddings'] as $name => $embedding) {
+            if ('service' === $embedding['type'] && empty($embedding['service'])) {
+                throw new InvalidArgumentException(\sprintf('Embedding provider "%s" of type service requires the service option.', $name));
+            }
+        }
+        foreach ($config['vector_stores'] as $name => $store) {
+            if ('service' === $store['type'] && empty($store['service'])) {
+                throw new InvalidArgumentException(\sprintf('Vector store "%s" of type service requires the service option.', $name));
+            }
+        }
+        foreach ($config['pipelines'] as $name => &$pipeline) {
+            $pipeline['embeddings'] ??= $config['default_embeddings'];
+            $pipeline['vector_store'] ??= $config['default_vector_store'];
+            $this->requireRagReference($pipeline['embeddings'], $config['embeddings'], 'embedding provider', (string) $name);
+            $this->requireRagReference($pipeline['vector_store'], $config['vector_stores'], 'vector store', (string) $name);
+        }
+        unset($pipeline);
+    }
+
+    /** @param array<string, mixed> $available */
+    private function requireRagReference(mixed $selected, array $available, string $kind, string $owner): void
+    {
+        if (!\is_string($selected) || '' === $selected || !isset($available[$selected])) {
+            throw new InvalidArgumentException(\sprintf('RAG "%s" requires a configured %s.', $owner, $kind));
+        }
     }
 
     /** @param array<string, mixed> $config */

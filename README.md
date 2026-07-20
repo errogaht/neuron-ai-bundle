@@ -349,6 +349,167 @@ neuron_ai:
     default_agent: order_manager
 ```
 
+## RAG and vector stores
+
+RAG needs two separate model-facing components: an **embedding provider** converts text into vectors, and a **vector store** persists and searches those vectors. The chat provider still generates the final answer. The bundle makes all three named Symfony services and wires them into Neuron's native `RAG` class.
+
+```yaml
+# config/packages/neuron_ai.yaml
+neuron_ai:
+    default_provider: main
+
+    providers:
+        main:
+            type: openai_like
+            base_url: '%env(AI_BASE_URL)%'
+            key: '%env(AI_API_KEY)%'
+            model: '%env(AI_MODEL)%'
+
+    rag:
+        default_embeddings: knowledge
+        default_vector_store: knowledge
+
+        embeddings:
+            knowledge:
+                type: openai_like
+                base_url: '%env(EMBEDDINGS_BASE_URL)%'
+                key: '%env(EMBEDDINGS_API_KEY)%'
+                model: '%env(EMBEDDINGS_MODEL)%'
+                dimensions: 1024
+
+        vector_stores:
+            knowledge:
+                type: qdrant
+                collection_url: '%env(QDRANT_COLLECTION_URL)%'
+                key: '%env(QDRANT_API_KEY)%'
+                dimensions: 1024
+                top_k: 6
+
+        pipelines:
+            application_docs:
+                loaders:
+                    - App\Ai\Rag\DocumentationLoader
+                chunk_size: 50
+
+    agents:
+        knowledge:
+            class: NeuronAI\RAG\RAG
+            provider: main
+            instructions: 'Answer from retrieved application documentation. State when the answer is absent.'
+            rag:
+                enabled: true
+```
+
+The embedding dimensions must match the vector collection dimensions. Changing the embedding model or dimensions normally requires rebuilding that collection.
+
+### Data loaders and indexing
+
+A loader is an ordinary autowired Symfony service implementing Neuron's `DataLoaderInterface`. It can read Doctrine entities, APIs, CMS content, files or any application data:
+
+```php
+<?php
+
+namespace App\Ai\Rag;
+
+use App\Entity\Article;
+use App\Repository\ArticleRepository;
+use NeuronAI\RAG\DataLoader\DataLoaderInterface;
+use NeuronAI\RAG\Document;
+
+final class DocumentationLoader implements DataLoaderInterface
+{
+    public function __construct(private ArticleRepository $articles)
+    {
+    }
+
+    public function getDocuments(): array
+    {
+        return array_map(static function (Article $article): Document {
+            $document = new Document($article->getSearchableText());
+            $document->sourceType = 'article';
+            $document->sourceName = (string) $article->getId();
+            $document->metadata = ['tenant' => $article->getTenantId()];
+
+            return $document;
+        }, $this->articles->findPublished());
+    }
+}
+```
+
+Run a pipeline manually, during deployment, or from Scheduler/cron:
+
+```bash
+php bin/console neuron-ai:rag:index application_docs
+php bin/console neuron-ai:rag:index application_docs --reindex
+```
+
+`--reindex` deletes each returned `sourceType/sourceName` once before inserting its new chunks. Stable source identifiers are therefore important. Deletion and remote embedding/upsert cannot be made transactionally portable across every engine, so schedule retries and backups according to the selected store. Pipelines are also callable from application code through `RagIndexer::index()`.
+
+### Supported RAG drivers
+
+Embedding types: `openai`, `openai_like`, `ollama`, `gemini`, `mistral`, `voyage`, `cohere`, and `service`.
+
+For compatibility with Neuron 3.15, the built-in `openai_like` embedding driver cannot receive custom HTTP headers or Guzzle options. Select `type: service` when that transport customization is required.
+
+Vector-store types: `memory`, `file`, `qdrant`, `pinecone`, `chroma`, `meilisearch`, `weaviate`, and `service`. Use `service` for every Neuron adapter that requires its own client object, including Elasticsearch, OpenSearch, MariaDB, Typesense and third-party packages:
+
+```yaml
+services:
+    App\Ai\Rag\ProductVectorStore:
+        arguments:
+            $client: '@app.elasticsearch_client'
+            $index: products
+
+neuron_ai:
+    rag:
+        vector_stores:
+            products:
+                type: service
+                service: App\Ai\Rag\ProductVectorStore
+```
+
+Named autowiring follows the same convention as providers and agents:
+
+```php
+public function __construct(
+    EmbeddingsProviderInterface $knowledgeEmbeddings,
+    VectorStoreInterface $knowledgeVectorStore,
+) {
+}
+```
+
+The default entries autowire without a named argument. Vector stores injected into agents are query-scoped clones, preventing mutable metadata filters from leaking between users; ingestion uses the canonical store. Custom vector-store services must therefore be cloneable. For an in-memory store, index before creating the agent because each agent receives a snapshot. Persistent stores share their external collection normally.
+
+### Class-first RAG agent
+
+`#[AsNeuronAgent]` also works on a Neuron `RAG` subclass. Inject the named components and keep retrieval rules next to the prompt:
+
+```php
+#[AsNeuronAgent('knowledge')]
+final class KnowledgeAgent extends RAG
+{
+    public function __construct(
+        AIProviderInterface $mainProvider,
+        EmbeddingsProviderInterface $knowledgeEmbeddings,
+        VectorStoreInterface $knowledgeVectorStore,
+    ) {
+        parent::__construct();
+        $this->setAiProvider($mainProvider);
+        $this->setEmbeddingsProvider($knowledgeEmbeddings);
+        $this->setVectorStore($knowledgeVectorStore);
+    }
+
+    protected function instructions(): string
+    {
+        return 'Answer only from retrieved tenant-visible documents.';
+    }
+}
+```
+
+For YAML-owned RAG agents, `rag.pre_processors`, `rag.post_processors`, and `rag.retrieval` accept Symfony service IDs implementing the corresponding native Neuron interfaces.
+
+Metadata filters are part of the authorization boundary. Derive tenant/user filters from trusted Symfony security context, never from model arguments, and apply them before similarity search. A vector database must not become a cross-tenant side channel.
+
 ## Custom agents and all Neuron features
 
 For configuration-owned agents, set `class` in YAML. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:

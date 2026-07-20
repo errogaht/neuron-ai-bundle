@@ -6,6 +6,9 @@ namespace Errogaht\NeuronAiBundle\Tests\Integration;
 
 use Errogaht\NeuronAiBundle\Agent\AgentFactory;
 use Errogaht\NeuronAiBundle\Agent\AgentRunner;
+use Errogaht\NeuronAiBundle\Rag\RagIndexer;
+use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
+use NeuronAI\RAG\RAG;
 use NeuronAI\Tools\ToolInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
@@ -51,6 +54,23 @@ final class BundleTest extends KernelTestCase
         self::assertInstanceOf(TestClassAgent::class, $classConsumer->classAssistantAgent);
         self::assertNotSame($classConsumer->directAgent, $kernel->getContainer()->get(TestClassAgent::class));
         self::assertSame('Bundle response', $runner->chat('class_assistant', 'Hello from a class')->content());
+
+        // Scenario: a named pipeline embeds application-loader documents into the same store used by a configured RAG agent.
+        $indexer = $kernel->getContainer()->get(RagIndexer::class);
+        if (!$indexer instanceof RagIndexer) {
+            self::fail('The public RAG indexer has an invalid type.');
+        }
+        $indexResult = $indexer->index('knowledge', reindex: true);
+        self::assertSame(2, $indexResult->documents);
+        self::assertSame(1, $indexResult->sources);
+        $indexer->index('knowledge', reindex: true);
+        $ragAgent = $factory->create('rag_assistant');
+        self::assertInstanceOf(RAG::class, $ragAgent);
+        self::assertInstanceOf(TestEmbeddingProvider::class, $ragAgent->resolveEmbeddingsProvider());
+        self::assertCount(2, iterator_to_array($ragAgent->resolveVectorStore()->similaritySearch([10.0, 1.0])));
+        $stores = $kernel->getContainer()->get(VectorStoreRegistry::class);
+        self::assertInstanceOf(VectorStoreRegistry::class, $stores);
+        self::assertNotSame($stores->get('test'), $ragAgent->resolveVectorStore());
 
         // Scenario: the host routes bundle messages through Messenger and polls the normalized result.
         $async = $kernel->getContainer()->get(TestAsyncConsumer::class);

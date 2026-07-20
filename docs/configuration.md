@@ -10,6 +10,7 @@ All configuration lives under `neuron_ai`.
 | `default_agent` | string/null | `null` | Agent injected for `AgentInterface` |
 | `providers` | map | `{}` | Named provider definitions |
 | `agents` | map | `{}` | Named agent definitions |
+| `rag` | map | empty | Named embeddings, vector stores and ingestion pipelines |
 | `messenger` | map | disabled | Optional async execution |
 
 Unknown defaults and missing agent providers fail during container compilation.
@@ -97,10 +98,93 @@ Agent options:
 | `doctrine_mcp.enabled` | `false` | Attach the configured `doctrine_mcp.server` through an in-process MCP session |
 | `doctrine_mcp.only` | `[]` | If non-empty, expose only these MCP tool names |
 | `doctrine_mcp.exclude` | `[]` | Hide these MCP tool names; takes precedence over `only` |
+| `rag.enabled` | `false` | Configure this agent as a native Neuron `RAG` |
+| `rag.embeddings` | RAG default | Named embedding provider |
+| `rag.vector_store` | RAG default | Named vector store |
+| `rag.retrieval` | `null` | Optional custom `RetrievalInterface` service ID |
+| `rag.pre_processors` | `[]` | Ordered `PreProcessorInterface` service IDs |
+| `rag.post_processors` | `[]` | Ordered `PostProcessorInterface` service IDs |
 
 `doctrine_mcp.enabled` requires `errogaht/doctrine-mcp-bundle`. It reuses that bundle's complete server registry and security boundaries without an MCP URL. Filters change model visibility only; entity authorization must remain enforced by Doctrine MCP actor and scope providers. See the [Doctrine MCP bridge guide](../README.md#doctrine-mcp-bundle-bridge).
 
 Agents marked with `#[AsNeuronAgent('name')]` do not need an `agents` entry. Their provider, prompt and tools remain in the class, while their name is added to the same runtime registry. An attributed name is valid for `default_agent`. See [Class-first reusable agents](../README.md#class-first-reusable-agents).
+
+## RAG
+
+```yaml
+neuron_ai:
+    rag:
+        default_embeddings: knowledge
+        default_vector_store: knowledge
+        embeddings:
+            knowledge:
+                type: openai_like
+                base_url: '%env(EMBEDDINGS_BASE_URL)%'
+                key: '%env(EMBEDDINGS_API_KEY)%'
+                model: text-embedding-3-small
+                dimensions: 1024
+        vector_stores:
+            knowledge:
+                type: qdrant
+                collection_url: '%env(QDRANT_COLLECTION_URL)%'
+                key: '%env(QDRANT_API_KEY)%'
+                dimensions: 1024
+                top_k: 6
+        pipelines:
+            docs:
+                embeddings: knowledge
+                vector_store: knowledge
+                loaders: [App\Ai\Rag\DocumentationLoader]
+                chunk_size: 50
+```
+
+### Embedding providers
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `type` | `openai_like` | `openai`, `openai_like`, `ollama`, `gemini`, `mistral`, `voyage`, `cohere`, or `service` |
+| `service` | `null` | Custom `EmbeddingsProviderInterface` service ID |
+| `key` | `null` | Provider API key; use `%env(...)%` |
+| `model` | `null` | Embedding model |
+| `base_url` | `null` | Required by `openai_like`; optional Ollama override |
+| `dimensions` | `null` | Requested vector dimensions when supported |
+| `parameters` | `[]` | Provider-specific parameters/config |
+| `timeout` | `60` | HTTP request timeout |
+| `connect_timeout` | `10` | HTTP connection timeout |
+| `headers` | `[]` | Additional HTTP headers |
+| `http_options` | `[]` | Additional Guzzle options |
+
+`headers`, `timeout`, `connect_timeout`, and `http_options` apply to the built-in transports where the installed Neuron version exposes a custom HTTP client. Neuron 3.15 does not expose one for `openai_like`; use `type: service` when that provider needs custom transport settings.
+
+Named argument convention: embedding `knowledge` autowires into `EmbeddingsProviderInterface $knowledgeEmbeddings`. `default_embeddings` creates the unqualified interface alias.
+
+### Vector stores
+
+| Type | Required connection options |
+| --- | --- |
+| `memory` | none; volatile and intended for tests/session-local knowledge |
+| `file` | `directory`; optional `name`, `extension`, `top_k` |
+| `qdrant` | `collection_url`; optional `key`, `dimensions`, `top_k` |
+| `pinecone` | `key`, `index_url`; optional `namespace`, `version`, `top_k` |
+| `chroma` | `collection`; optional `host`, `tenant`, `database`, `key`, `top_k` |
+| `meilisearch` | `index_uid`; optional `host`, `key`, `embedder`, `dimensions`, `top_k` |
+| `weaviate` | `collection`; optional `host`, `key`, `top_k` |
+| `service` | `service` implementing `VectorStoreInterface` |
+
+Named argument convention: store `knowledge` autowires into `VectorStoreInterface $knowledgeVectorStore`. `default_vector_store` creates the unqualified interface alias.
+
+The registry keeps one canonical store for ingestion and returns a clone for each agent/named injection. This prevents request-specific filters from persisting in a long-running worker. External stores still address the same collection. A cloned memory store is a snapshot, so populate it before constructing an agent.
+
+### Pipelines
+
+Each pipeline requires at least one `DataLoaderInterface` service. Missing `embeddings` and `vector_store` inherit the RAG defaults. `chunk_size` controls embedding/upsert batches, not text splitting; configure a Neuron splitter inside the loader service.
+
+```bash
+php bin/console neuron-ai:rag:index docs
+php bin/console neuron-ai:rag:index docs --reindex
+```
+
+The reindex option deletes existing documents for every returned `sourceType/sourceName` pair before adding new chunks. It does not delete unrelated sources.
 
 Named aliases are generated as follows:
 

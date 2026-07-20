@@ -47,6 +47,9 @@ final class TestKernel extends Kernel
             $container->register(TestClassAgentConsumer::class)
                 ->setAutowired(true)
                 ->setPublic(true);
+            $container->register(TestEmbeddingProvider::class);
+            $container->register(TestVectorStore::class);
+            $container->register(TestRagLoader::class);
             $container->register(TestAsyncConsumer::class)
                 ->setAutowired(true)
                 ->setPublic(true);
@@ -61,7 +64,26 @@ final class TestKernel extends Kernel
                 // Scenario: the default may point to an attributed class discovered after extension loading.
                 'default_agent' => 'class_assistant',
                 'providers' => ['fake' => ['type' => 'service', 'service' => 'test.fake_provider']],
-                'agents' => ['assistant' => ['instructions' => 'Be concise.']],
+                'agents' => [
+                    'assistant' => ['instructions' => 'Be concise.'],
+                    'rag_assistant' => [
+                        'class' => TestRagAgent::class,
+                        'rag' => ['enabled' => true],
+                    ],
+                ],
+                'rag' => [
+                    'default_embeddings' => 'test',
+                    'default_vector_store' => 'test',
+                    'embeddings' => [
+                        'test' => ['type' => 'service', 'service' => TestEmbeddingProvider::class],
+                    ],
+                    'vector_stores' => [
+                        'test' => ['type' => 'service', 'service' => TestVectorStore::class],
+                    ],
+                    'pipelines' => [
+                        'knowledge' => ['loaders' => [TestRagLoader::class], 'chunk_size' => 1],
+                    ],
+                ],
                 'messenger' => ['enabled' => true],
             ]);
         });
