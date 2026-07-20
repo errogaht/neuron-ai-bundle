@@ -1,8 +1,14 @@
 # Advanced Neuron integration
 
-The bundle configures the common graph — provider, agent, instructions and tools — but returns native Neuron objects. Features that are application-specific stay in normal Symfony services.
+The bundle supports both configuration-owned and class-owned agents while returning native Neuron objects. Features that are application-specific stay in normal Symfony services.
 
-## Custom agent constructors
+## Class-owned reusable agents
+
+Use `#[AsNeuronAgent('name')]` when the prompt and tool composition belong to the application class. Override Neuron's native `instructions()` and `tools()` methods, inject the named provider and tool services, and call `parent::__construct()` before configuring the provider. The attributed service is automatically non-shared and is registered in `AgentFactory`, `AgentRunner`, console commands, Messenger and named autowiring.
+
+The name is inferred when omitted: `SupportAgent` becomes `support`, and `OrderManagerAgent` becomes `order_manager`. The service must use Symfony autoconfiguration. Concrete-class injection returns the native class-owned service; factory/runner access additionally applies global agent configurators and observers.
+
+## Configuration-owned custom agent constructors
 
 Configured agent classes are autowired and non-shared:
 

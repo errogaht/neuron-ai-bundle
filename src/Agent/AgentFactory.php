@@ -49,13 +49,20 @@ final class AgentFactory
             throw new \LogicException(\sprintf('Configured agent "%s" must implement %s.', $name, AgentInterface::class));
         }
         $config = $this->config[$name];
-        $agent->setAiProvider($this->providers->get((string) $config['provider']));
+        // Class-first agents can own their provider through provider() or constructor injection.
+        if (null !== $config['provider']) {
+            $agent->setAiProvider($this->providers->get((string) $config['provider']));
+        }
         if (null !== $config['instructions']) {
             $agent->setInstructions((string) $config['instructions']);
         }
         if ($agent instanceof Agent) {
-            $agent->toolMaxRuns((int) $config['tool_max_runs']);
-            $agent->parallelToolCalls((bool) $config['parallel_tool_calls']);
+            if (null !== $config['tool_max_runs']) {
+                $agent->toolMaxRuns((int) $config['tool_max_runs']);
+            }
+            if (null !== $config['parallel_tool_calls']) {
+                $agent->parallelToolCalls((bool) $config['parallel_tool_calls']);
+            }
         }
         foreach ((array) $config['tools'] as $toolId) {
             $tool = $this->tools->get((string) $toolId);

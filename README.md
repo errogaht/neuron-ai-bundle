@@ -273,9 +273,85 @@ For synchronous HTTP requests, the usual Symfony security context remains availa
 
 The bridge exposes MCP **tools**, matching Neuron's `McpConnector`. MCP resources and prompts are not converted into tools. No bridge services are registered when `doctrine_mcp.enabled` is false, so Doctrine MCP Bundle remains an optional dependency.
 
+## Class-first reusable agents
+
+An agent can own its prompt and tools entirely in one application class. Mark an autoconfigured Symfony service with `#[AsNeuronAgent]`; it becomes available both by its concrete class and by a stable registry name used by `AgentRunner`, console commands and Messenger:
+
+```php
+<?php
+
+namespace App\Ai\Agent;
+
+use App\Ai\Tool\FindOrderTool;
+use App\Ai\Tool\OrderTools;
+use Errogaht\NeuronAiBundle\Agent\Attribute\AsNeuronAgent;
+use NeuronAI\Agent\Agent;
+use NeuronAI\Providers\AIProviderInterface;
+use NeuronAI\Tools\ToolInterface;
+use NeuronAI\Tools\Toolkits\ToolkitInterface;
+
+#[AsNeuronAgent('order_manager')]
+final class OrderManagerAgent extends Agent
+{
+    public function __construct(
+        AIProviderInterface $mainProvider,
+        private readonly FindOrderTool $findOrder,
+        private readonly OrderTools $orders,
+    ) {
+        // Required whenever a subclass declares its own constructor: Neuron initializes workflow state here.
+        parent::__construct();
+        $this->setAiProvider($mainProvider);
+    }
+
+    protected function instructions(): string
+    {
+        return <<<'PROMPT'
+            You manage orders for the authenticated customer.
+            Read the order before proposing a change and never bypass tool authorization.
+            PROMPT;
+    }
+
+    /** @return list<ToolInterface|ToolkitInterface> */
+    protected function tools(): array
+    {
+        return [$this->findOrder, $this->orders];
+    }
+}
+```
+
+`$mainProvider` uses the named provider autowiring configured under `neuron_ai.providers.main`. Tool constructor dependencies are ordinary Symfony services. No `neuron_ai.agents` entry is required.
+
+Use the concrete service directly:
+
+```php
+final class OrderAssistant
+{
+    public function __construct(private OrderManagerAgent $agent)
+    {
+    }
+}
+```
+
+Or use its registered name wherever the bundle lifecycle is useful:
+
+```php
+$result = $runner->chat('order_manager', 'Move my order to tomorrow.');
+```
+
+Named autowiring also works with `AgentInterface $orderManagerAgent`. The attribute makes every instance non-shared because Neuron agents contain mutable workflow state. If no name is supplied, `OrderManagerAgent` becomes `order_manager`. The class must be covered by Symfony's normal `services.yaml` resource with `autoconfigure: true`.
+
+Class-owned agents preserve their own provider, `instructions()` and `tools()`. Creating them through `AgentFactory` or `AgentRunner` additionally applies bundle configurators and observers. Direct concrete-class injection intentionally gives the native service without request-specific `AgentContext` processing.
+
+An attributed agent may also be the default without duplicating it in `agents`:
+
+```yaml
+neuron_ai:
+    default_agent: order_manager
+```
+
 ## Custom agents and all Neuron features
 
-Set `class` to your own `AgentInterface` implementation or subclass. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:
+For configuration-owned agents, set `class` in YAML. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:
 
 ```yaml
 neuron_ai:

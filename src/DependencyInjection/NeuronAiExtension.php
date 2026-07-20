@@ -157,9 +157,7 @@ final class NeuronAiExtension extends Extension
         if (null !== $config['default_provider'] && !isset($config['providers'][$config['default_provider']])) {
             throw new InvalidArgumentException(\sprintf('Unknown neuron_ai.default_provider "%s".', $config['default_provider']));
         }
-        if (null !== $config['default_agent'] && !isset($config['agents'][$config['default_agent']])) {
-            throw new InvalidArgumentException(\sprintf('Unknown neuron_ai.default_agent "%s".', $config['default_agent']));
-        }
+        // Attribute-registered agents are discovered later by AgentServicePass, which performs the final default check.
         foreach ($config['providers'] as $name => $provider) {
             if ('service' === $provider['type'] && empty($provider['service'])) {
                 throw new InvalidArgumentException(\sprintf('Provider "%s" of type service requires the service option.', $name));

@@ -6,6 +6,7 @@ namespace Errogaht\NeuronAiBundle\Tests\Integration;
 
 use Errogaht\NeuronAiBundle\Agent\AgentFactory;
 use Errogaht\NeuronAiBundle\Agent\AgentRunner;
+use NeuronAI\Tools\ToolInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 /** Exercises the complete Symfony container-to-Neuron chat path with no network dependency. */
@@ -34,7 +35,22 @@ final class BundleTest extends KernelTestCase
         if (!$consumer instanceof TestAgentConsumer) {
             self::fail('The autowired test consumer has an invalid type.');
         }
+        self::assertInstanceOf(TestClassAgent::class, $consumer->agent);
         self::assertNotSame($consumer->agent, $factory->create('assistant'));
+
+        // Scenario: one attributed class owns its prompt and tools, yet remains reusable by class and registry name.
+        self::assertContains('class_assistant', $factory->names());
+        $classConsumer = $kernel->getContainer()->get(TestClassAgentConsumer::class);
+        if (!$classConsumer instanceof TestClassAgentConsumer) {
+            self::fail('The class-first agent consumer has an invalid type.');
+        }
+        self::assertSame('This prompt belongs to the agent class.', $classConsumer->directAgent->resolveInstructions());
+        $classTool = $classConsumer->directAgent->getTools()[0];
+        self::assertInstanceOf(ToolInterface::class, $classTool);
+        self::assertSame('class_greeting', $classTool->getName());
+        self::assertInstanceOf(TestClassAgent::class, $classConsumer->classAssistantAgent);
+        self::assertNotSame($classConsumer->directAgent, $kernel->getContainer()->get(TestClassAgent::class));
+        self::assertSame('Bundle response', $runner->chat('class_assistant', 'Hello from a class')->content());
 
         // Scenario: the host routes bundle messages through Messenger and polls the normalized result.
         $async = $kernel->getContainer()->get(TestAsyncConsumer::class);

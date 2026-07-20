@@ -38,6 +38,15 @@ final class TestKernel extends Kernel
             $container->register(TestAgentConsumer::class)
                 ->setAutowired(true)
                 ->setPublic(true);
+            $container->register(TestClassAgentTool::class)
+                ->setAutowired(true);
+            $container->register(TestClassAgent::class)
+                ->setAutowired(true)
+                ->setAutoconfigured(true)
+                ->setPublic(true);
+            $container->register(TestClassAgentConsumer::class)
+                ->setAutowired(true)
+                ->setPublic(true);
             $container->register(TestAsyncConsumer::class)
                 ->setAutowired(true)
                 ->setPublic(true);
@@ -49,7 +58,8 @@ final class TestKernel extends Kernel
             ]);
             $container->loadFromExtension('neuron_ai', [
                 'default_provider' => 'fake',
-                'default_agent' => 'assistant',
+                // Scenario: the default may point to an attributed class discovered after extension loading.
+                'default_agent' => 'class_assistant',
                 'providers' => ['fake' => ['type' => 'service', 'service' => 'test.fake_provider']],
                 'agents' => ['assistant' => ['instructions' => 'Be concise.']],
                 'messenger' => ['enabled' => true],

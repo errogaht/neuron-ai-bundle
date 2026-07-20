@@ -100,6 +100,8 @@ Agent options:
 
 `doctrine_mcp.enabled` requires `errogaht/doctrine-mcp-bundle`. It reuses that bundle's complete server registry and security boundaries without an MCP URL. Filters change model visibility only; entity authorization must remain enforced by Doctrine MCP actor and scope providers. See the [Doctrine MCP bridge guide](../README.md#doctrine-mcp-bundle-bridge).
 
+Agents marked with `#[AsNeuronAgent('name')]` do not need an `agents` entry. Their provider, prompt and tools remain in the class, while their name is added to the same runtime registry. An attributed name is valid for `default_agent`. See [Class-first reusable agents](../README.md#class-first-reusable-agents).
+
 Named aliases are generated as follows:
 
 | Configuration key | Autowired argument |
