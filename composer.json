@@ -21,6 +21,7 @@
         "symfony/uid": "^6.4 || ^7.4 || ^8.0"
     },
     "require-dev": {
+        "mcp/sdk": "^0.7",
         "friendsofphp/php-cs-fixer": "^3.85",
         "phpstan/phpstan": "^2.1",
         "phpunit/phpunit": "^10.5 || ^11.5 || ^12.0",
@@ -29,6 +30,7 @@
         "symfony/yaml": "^6.4 || ^7.4 || ^8.0"
     },
     "suggest": {
+        "errogaht/doctrine-mcp-bundle": "Attach the application's configured Doctrine MCP server directly to Neuron agents without HTTP.",
         "symfony/messenger": "Dispatch Neuron agents to async transports and persist their results."
     },
     "autoload": {"psr-4": {"Errogaht\\NeuronAiBundle\\": "src/"}},

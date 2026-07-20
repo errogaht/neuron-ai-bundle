@@ -50,6 +50,14 @@ final class Configuration implements ConfigurationInterface
         $tools->defaultValue([]);
         $agent->integerNode('tool_max_runs')->min(1)->defaultValue(10);
         $agent->booleanNode('parallel_tool_calls')->defaultFalse();
+        $doctrineMcp = $agent->arrayNode('doctrine_mcp')->canBeEnabled();
+        $doctrineMcpChildren = $doctrineMcp->children();
+        $doctrineOnly = $doctrineMcpChildren->arrayNode('only');
+        $doctrineOnly->scalarPrototype();
+        $doctrineOnly->defaultValue([]);
+        $doctrineExclude = $doctrineMcpChildren->arrayNode('exclude');
+        $doctrineExclude->scalarPrototype();
+        $doctrineExclude->defaultValue([]);
 
         $messenger = $children->arrayNode('messenger')->addDefaultsIfNotSet();
         $messengerChildren = $messenger->children();

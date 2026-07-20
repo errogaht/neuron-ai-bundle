@@ -74,11 +74,31 @@ neuron_ai:
                 - App\Ai\Tool\FindOrderTool
             tool_max_runs: 10
             parallel_tool_calls: false
+            doctrine_mcp:
+                enabled: false
+                only: []
+                exclude: []
 ```
 
 The class must implement `NeuronAI\Agent\AgentInterface`. Its constructor is autowired. Every configured agent is non-shared, and every listed tool is cloned before attachment.
 
 Each `tools` item may reference a native `ToolInterface`, a native `ToolkitInterface`, or the bundle's attribute-driven `AbstractToolGroup`. A tool group expands all of its `#[Tool]` methods when Neuron bootstraps the agent.
+
+Agent options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `class` | `NeuronAI\Agent\Agent` | Autowired agent implementation |
+| `provider` | root default | Named provider used by this agent |
+| `instructions` | `null` | Static system instructions |
+| `tools` | `[]` | Explicit Symfony tool or toolkit service IDs |
+| `tool_max_runs` | `10` | Maximum tool loop iterations |
+| `parallel_tool_calls` | `false` | Enable provider parallel tool calls |
+| `doctrine_mcp.enabled` | `false` | Attach the configured `doctrine_mcp.server` through an in-process MCP session |
+| `doctrine_mcp.only` | `[]` | If non-empty, expose only these MCP tool names |
+| `doctrine_mcp.exclude` | `[]` | Hide these MCP tool names; takes precedence over `only` |
+
+`doctrine_mcp.enabled` requires `errogaht/doctrine-mcp-bundle`. It reuses that bundle's complete server registry and security boundaries without an MCP URL. Filters change model visibility only; entity authorization must remain enforced by Doctrine MCP actor and scope providers. See the [Doctrine MCP bridge guide](../README.md#doctrine-mcp-bundle-bridge).
 
 Named aliases are generated as follows:
 

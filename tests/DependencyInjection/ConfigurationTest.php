@@ -22,6 +22,29 @@ final class ConfigurationTest extends TestCase
         self::assertSame('openai_like', $config['providers']['main']['type']);
         self::assertSame(60.0, $config['providers']['main']['timeout']);
         self::assertSame([], $config['agents']['assistant']['tools']);
+        self::assertFalse($config['agents']['assistant']['doctrine_mcp']['enabled']);
+        self::assertSame([], $config['agents']['assistant']['doctrine_mcp']['only']);
+        self::assertSame([], $config['agents']['assistant']['doctrine_mcp']['exclude']);
         self::assertFalse($config['messenger']['enabled']);
+    }
+
+    public function testDoctrineMcpCapabilityFiltersAreNormalized(): void
+    {
+        // Scenario: an agent receives a deliberately restricted subset of the application's MCP registry.
+        $config = (new Processor())->processConfiguration(new Configuration(), [[
+            'agents' => [
+                'assistant' => [
+                    'doctrine_mcp' => [
+                        'enabled' => true,
+                        'only' => ['doctrine_get', 'doctrine_update'],
+                        'exclude' => ['doctrine_delete'],
+                    ],
+                ],
+            ],
+        ]]);
+
+        self::assertTrue($config['agents']['assistant']['doctrine_mcp']['enabled']);
+        self::assertSame(['doctrine_get', 'doctrine_update'], $config['agents']['assistant']['doctrine_mcp']['only']);
+        self::assertSame(['doctrine_delete'], $config['agents']['assistant']['doctrine_mcp']['exclude']);
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Errogaht\NeuronAiBundle\Agent;
 
+use Errogaht\NeuronAiBundle\Integration\DoctrineMcp\DoctrineMcpToolProvider;
 use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
 use NeuronAI\Agent\Agent;
 use NeuronAI\Agent\AgentInterface;
@@ -26,6 +27,7 @@ final class AgentFactory
         private readonly iterable $configurators,
         private readonly iterable $observers,
         private readonly ?string $defaultAgent = null,
+        private readonly ?ContainerInterface $integrations = null,
     ) {
     }
 
@@ -59,6 +61,20 @@ final class AgentFactory
             $tool = $this->tools->get((string) $toolId);
             $agent->addTool(\is_object($tool) ? clone $tool : $tool);
         }
+        if (($config['doctrine_mcp']['enabled'] ?? false) === true) {
+            if (null === $this->integrations || !$this->integrations->has('doctrine_mcp')) {
+                throw new \LogicException('The agent enables Doctrine MCP, but its in-process bridge is unavailable. Install and enable errogaht/doctrine-mcp-bundle.');
+            }
+            $bridge = $this->integrations->get('doctrine_mcp');
+            if (!$bridge instanceof DoctrineMcpToolProvider) {
+                throw new \LogicException('The Doctrine MCP bridge service has an invalid type.');
+            }
+            // The MCP server remains the authorization boundary; these filters only reduce model-visible capabilities.
+            $agent->addTool($bridge->tools(
+                $this->stringList($config['doctrine_mcp']['only'] ?? []),
+                $this->stringList($config['doctrine_mcp']['exclude'] ?? []),
+            ));
+        }
         $context = new AgentContext($name, $threadId, $attributes);
         foreach ($this->configurators as $configurator) {
             $configurator->configure($agent, $context);
@@ -70,5 +86,20 @@ final class AgentFactory
         }
 
         return $agent;
+    }
+
+    /**
+     * Symfony's configuration component guarantees a sequence of scalar values; this final
+     * normalization gives the optional integration a stable list-of-string boundary.
+     *
+     * @return list<string>
+     */
+    private function stringList(mixed $values): array
+    {
+        if (!\is_array($values)) {
+            return [];
+        }
+
+        return array_values(array_map(static fn (mixed $value): string => (string) $value, $values));
     }
 }

@@ -1,6 +1,6 @@
 # Neuron AI Bundle
 
-Symfony-native integration for [Neuron AI](https://docs.neuron-ai.dev/): configure providers and agents in YAML, inject them through autowiring, attach ordinary Symfony services as tools, and optionally run agents through Messenger.
+Symfony-native integration for [Neuron AI](https://docs.neuron-ai.dev/): configure providers and agents in YAML, inject them through autowiring, attach ordinary Symfony services or a configured Doctrine MCP server as tools, and optionally run agents through Messenger.
 
 The bundle does not replace Neuron AI. It removes repetitive construction and configuration while leaving the complete Neuron API available for streaming, structured output, RAG, workflows, persistence, human-in-the-loop, MCP and observability.
 
@@ -223,6 +223,56 @@ neuron_ai:
 
 The group is a native Neuron toolkit. Method names become `snake_case` unless `name` is provided. Schema types and required fields are inferred from PHP scalar/array types, nullable/default parameters, and backed enums. Use `#[ToolParameter]` for descriptions, explicit `PropertyType`, enum values or a required override. Complex DTO schemas should use a native Neuron `Tool` class.
 
+## Doctrine MCP Bundle bridge
+
+When the application also uses [Doctrine MCP Bundle](https://github.com/errogaht/doctrine-mcp-bundle), a configured MCP server can be attached to an agent without publishing an HTTP endpoint or specifying an MCP URL:
+
+```bash
+composer require errogaht/doctrine-mcp-bundle
+```
+
+Configure entities, fields, actor resolution, query scopes and custom MCP tools in `doctrine_mcp` as usual. Then enable the bridge on the required Neuron agent:
+
+```yaml
+# config/packages/neuron_ai.yaml
+neuron_ai:
+    agents:
+        order_manager:
+            provider: main
+            instructions: 'Read and update only orders available through the supplied tools.'
+            doctrine_mcp:
+                enabled: true
+```
+
+That is the complete connection configuration: there is no URL, port, SSE transport, HTTP request or duplicated tool registration. The bundle opens an isolated in-process MCP protocol session against the application's existing `doctrine_mcp.server`. All built-in Doctrine tools and custom tools discovered by Doctrine MCP Bundle are available by default.
+
+Reduce the model-visible capability set per agent with `only` and `exclude`:
+
+```yaml
+neuron_ai:
+    agents:
+        order_reader:
+            doctrine_mcp:
+                enabled: true
+                only:
+                    - doctrine_list_entities
+                    - doctrine_describe_entity
+                    - doctrine_search
+                    - doctrine_get
+
+        order_editor:
+            doctrine_mcp:
+                enabled: true
+                exclude:
+                    - doctrine_delete
+```
+
+`exclude` takes precedence when a name appears in both lists. These lists control which tools the model can see; they are not authorization rules. The same Doctrine MCP handlers still resolve the current actor and execute configured entity scopes, validation, audit and dry-run behavior.
+
+For synchronous HTTP requests, the usual Symfony security context remains available to the Doctrine MCP actor provider. Messenger workers have no authenticated browser session by default: configure a worker-safe `ActorProviderInterface` and restore identity from trusted, validated job context before exposing tenant or user data. Never accept a tenant or actor identifier merely because the model supplied it.
+
+The bridge exposes MCP **tools**, matching Neuron's `McpConnector`. MCP resources and prompts are not converted into tools. No bridge services are registered when `doctrine_mcp.enabled` is false, so Doctrine MCP Bundle remains an optional dependency.
+
 ## Custom agents and all Neuron features
 
 Set `class` to your own `AgentInterface` implementation or subclass. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:
@@ -360,6 +410,7 @@ Implement Neuron's `ObserverInterface` as an autoconfigured Symfony service to r
 - Keep API keys in environment secrets, never committed YAML.
 - Treat tools as capabilities. Expose only the services required by each agent.
 - Enforce user, tenant and object authorization inside application services/repositories. A system prompt is not an access-control mechanism.
+- With Doctrine MCP, keep authorization in its actor provider and query scopes; `only`/`exclude` are defense-in-depth capability filters, not access control.
 - Validate tool inputs and structured output before causing side effects.
 - Configure Messenger encryption or an appropriate protected transport when prompts contain sensitive data.
 - Use a dedicated cache pool with the required retention policy for async results.

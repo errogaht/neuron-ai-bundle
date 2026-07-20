@@ -11,6 +11,7 @@ use Errogaht\NeuronAiBundle\Async\CacheAgentJobResultStore;
 use Errogaht\NeuronAiBundle\Async\RunAgentMessageHandler;
 use Errogaht\NeuronAiBundle\Command\AgentRunCommand;
 use Errogaht\NeuronAiBundle\Command\AgentStatusCommand;
+use Errogaht\NeuronAiBundle\Integration\DoctrineMcp\DoctrineMcpToolProvider;
 use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
 use NeuronAI\Agent\AgentInterface;
 use NeuronAI\Providers\AIProviderInterface;
@@ -61,6 +62,12 @@ final class NeuronAiExtension extends Extension
             new ServiceLocatorArgument($providerReferences),
             $config['default_provider'],
         ]);
+        $doctrineMcpEnabled = $this->usesDoctrineMcp($config);
+        if ($doctrineMcpEnabled) {
+            $this->registerDoctrineMcp($container);
+        }
+        $integrations = $doctrineMcpEnabled ? ['doctrine_mcp' => new Reference(DoctrineMcpToolProvider::class)] : [];
+
         $container->getDefinition(AgentFactory::class)->setArguments([
             $config['agents'],
             new ServiceLocatorArgument($agentReferences),
@@ -69,6 +76,7 @@ final class NeuronAiExtension extends Extension
             new TaggedIteratorArgument('neuron_ai.agent_configurator'),
             new TaggedIteratorArgument('neuron_ai.observer'),
             $config['default_agent'],
+            new ServiceLocatorArgument($integrations),
         ]);
 
         $this->registerNamedRuntimeServices($container, $config);
@@ -79,6 +87,30 @@ final class NeuronAiExtension extends Extension
 
         $asyncServices = $config['messenger']['enabled'] ? ['dispatcher' => new Reference(AsyncAgentDispatcher::class)] : [];
         $container->getDefinition(AgentRunCommand::class)->setArgument(2, new ServiceLocatorArgument($asyncServices));
+    }
+
+    /** @param array<string, mixed> $config */
+    private function usesDoctrineMcp(array $config): bool
+    {
+        foreach ($config['agents'] as $agent) {
+            if (($agent['doctrine_mcp']['enabled'] ?? false) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function registerDoctrineMcp(ContainerBuilder $container): void
+    {
+        if (!class_exists(\Mcp\Server::class) || !class_exists(\NeuronAI\MCP\McpConnector::class)) {
+            throw new InvalidArgumentException('Doctrine MCP integration requires errogaht/doctrine-mcp-bundle and mcp/sdk ^0.7.');
+        }
+        // Keep this reference lazy: Symfony may load NeuronAiBundle before DoctrineMcpBundle.
+        // The normal container reference check still reports a missing bundle during compilation.
+        $container->setDefinition(DoctrineMcpToolProvider::class, new Definition(DoctrineMcpToolProvider::class, [
+            new Reference('doctrine_mcp.server'),
+        ]));
     }
 
     /**
