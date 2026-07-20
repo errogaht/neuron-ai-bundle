@@ -1,5 +1,7 @@
 parameters:
     level: 8
+    # Symfony 6.4 and 8.x expose different generic precision for the same runtime APIs.
+    treatPhpDocTypesAsCertain: false
     paths:
         - src
         - tests

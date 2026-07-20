@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Errogaht\NeuronAiBundle\DependencyInjection;
 
+use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 
@@ -14,6 +15,9 @@ final class Configuration implements ConfigurationInterface
     {
         $tree = new TreeBuilder('neuron_ai');
         $root = $tree->getRootNode();
+        if (!$root instanceof ArrayNodeDefinition) {
+            throw new \LogicException('The neuron_ai configuration root must be an array node.');
+        }
 
         $children = $root->children();
         $children->scalarNode('default_provider')->defaultNull();
