@@ -1,0 +1,48 @@
+{
+    "name": "errogaht/neuron-ai-bundle",
+    "description": "Symfony integration for Neuron AI agents, providers, tools, workflows and Messenger jobs.",
+    "keywords": ["ai", "agents", "neuron-ai", "symfony", "symfony-bundle"],
+    "homepage": "https://github.com/errogaht/neuron-ai-bundle",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "authors": [{"name": "Alex Teterin"}],
+    "require": {
+        "php": "^8.1",
+        "neuron-core/neuron-ai": "^3.15",
+        "psr/cache": "^1.0 || ^2.0 || ^3.0",
+        "psr/log": "^1.1 || ^2.0 || ^3.0",
+        "symfony/cache": "^6.4 || ^7.4 || ^8.0",
+        "symfony/config": "^6.4 || ^7.4 || ^8.0",
+        "symfony/console": "^6.4 || ^7.4 || ^8.0",
+        "symfony/dependency-injection": "^6.4 || ^7.4 || ^8.0",
+        "symfony/event-dispatcher": "^6.4 || ^7.4 || ^8.0",
+        "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
+        "symfony/http-client": "^6.4 || ^7.4 || ^8.0",
+        "symfony/uid": "^6.4 || ^7.4 || ^8.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.85",
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^10.5 || ^11.5 || ^12.0",
+        "symfony/messenger": "^6.4 || ^7.4 || ^8.0",
+        "symfony/phpunit-bridge": "^6.4 || ^7.4 || ^8.0",
+        "symfony/yaml": "^6.4 || ^7.4 || ^8.0"
+    },
+    "suggest": {
+        "symfony/messenger": "Dispatch Neuron agents to async transports and persist their results."
+    },
+    "autoload": {"psr-4": {"Errogaht\\NeuronAiBundle\\": "src/"}},
+    "autoload-dev": {"psr-4": {"Errogaht\\NeuronAiBundle\\Tests\\": "tests/"}},
+    "support": {
+        "issues": "https://github.com/errogaht/neuron-ai-bundle/issues",
+        "source": "https://github.com/errogaht/neuron-ai-bundle"
+    },
+    "config": {"sort-packages": true},
+    "extra": {"branch-alias": {"dev-master": "0.1.x-dev"}},
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "check": ["@test", "@analyse", "@cs-check"]
+    }
+}

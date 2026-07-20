@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semantic version component to increment
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: neuron-ai-bundle-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag, publish, and update Packagist
+    if: >-
+      github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch ==
+      'master')
+    runs-on: ubuntu-latest
+    env:
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      VERSION_BUMP: ${{ inputs.bump || 'patch' }}
+      GH_TOKEN: ${{ github.token }}
+      PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+
+    steps:
+      - name: Check out the successfully tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Calculate and push the release tag
+        id: version
+        shell: bash
+        run: |
+          # A release points at the exact revision that passed CI. The first
+          # successful build seeds v0.1.0; later builds increment semver.
+          set -euo pipefail
+          git fetch --force --tags origin
+
+          existing_tag="$(git tag --points-at "${TARGET_SHA}" --list 'v[0-9]*' | sort -V | tail -n 1)"
+          if [[ -n "${existing_tag}" ]]; then
+            echo "tag=${existing_tag}" >> "${GITHUB_OUTPUT}"
+            echo "created=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          latest_tag="$(git tag --list 'v[0-9]*' | sort -V | tail -n 1)"
+          if [[ -z "${latest_tag}" ]]; then
+            tag="v0.1.0"
+          elif [[ "${latest_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+            case "${VERSION_BUMP}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "Unsupported version bump: ${VERSION_BUMP}" >&2; exit 1 ;;
+            esac
+            tag="v${major}.${minor}.${patch}"
+          else
+            echo "Latest tag '${latest_tag}' is not a supported semantic version." >&2
+            exit 1
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag --annotate "${tag}" "${TARGET_SHA}" --message "${tag}"
+          git push origin "refs/tags/${tag}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "created=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Create the GitHub release
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          CREATED: ${{ steps.version.outputs.created }}
+        run: |
+          # Re-running the workflow is idempotent for both the tag and release.
+          set -euo pipefail
+          if [[ "${CREATED}" == "true" ]]; then
+            gh release create "${RELEASE_TAG}" --verify-tag --generate-notes --title "${RELEASE_TAG}"
+          elif ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --verify-tag --generate-notes --title "${RELEASE_TAG}"
+          fi
+
+      - name: Update Packagist immediately
+        run: |
+          # GitHub's webhook normally updates Packagist; this explicit call
+          # also repairs delayed or missed webhook delivery.
+          set -euo pipefail
+          if [[ -z "${PACKAGIST_TOKEN}" ]]; then
+            echo "PACKAGIST_TOKEN repository secret is not configured." >&2
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header "Authorization: Bearer errogaht:${PACKAGIST_TOKEN}" \
+            --data '{"repository":"https://github.com/errogaht/neuron-ai-bundle"}' \
+            https://packagist.org/api/update-package
