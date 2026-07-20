@@ -67,7 +67,9 @@ final class BundleTest extends KernelTestCase
         $ragAgent = $factory->create('rag_assistant');
         self::assertInstanceOf(RAG::class, $ragAgent);
         self::assertInstanceOf(TestEmbeddingProvider::class, $ragAgent->resolveEmbeddingsProvider());
-        self::assertCount(2, iterator_to_array($ragAgent->resolveVectorStore()->similaritySearch([10.0, 1.0])));
+        $matches = $ragAgent->resolveVectorStore()->similaritySearch([10.0, 1.0]);
+        // Neuron 3.15 returns an array while newer adapters may return any Traversable implementation.
+        self::assertCount(2, \is_array($matches) ? $matches : iterator_to_array($matches));
         $stores = $kernel->getContainer()->get(VectorStoreRegistry::class);
         self::assertInstanceOf(VectorStoreRegistry::class, $stores);
         self::assertNotSame($stores->get('test'), $ragAgent->resolveVectorStore());
