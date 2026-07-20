@@ -18,7 +18,6 @@ final class BundleTest extends KernelTestCase
 
     public function testConfiguredAgentCanRunThroughPublicSymfonyService(): void
     {
-        $originalExceptionHandler = self::currentExceptionHandler();
         // Scenario: application code asks the runner for its default declarative agent.
         $kernel = self::bootKernel(['debug' => false]);
 
@@ -46,19 +45,5 @@ final class BundleTest extends KernelTestCase
         self::assertSame('succeeded', $async->results->get($jobId)['status'] ?? null);
 
         self::ensureKernelShutdown();
-        for ($depth = 0; $depth < 8 && self::currentExceptionHandler() !== $originalExceptionHandler; ++$depth) {
-            restore_exception_handler();
-        }
-    }
-
-    /** Reads the current handler through PHP's balanced setter API without changing the stack. */
-    private static function currentExceptionHandler(): ?callable
-    {
-        $probe = static function (\Throwable $exception): void {
-        };
-        $current = set_exception_handler($probe);
-        restore_exception_handler();
-
-        return $current;
     }
 }

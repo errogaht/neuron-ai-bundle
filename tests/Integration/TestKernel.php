@@ -23,7 +23,16 @@ final class TestKernel extends Kernel
     {
         $loader->load(static function (ContainerBuilder $container): void {
             // Scenario: a project supplies a custom Neuron provider service and names one agent in YAML-equivalent config.
-            $container->loadFromExtension('framework', ['secret' => 'test', 'test' => true, 'http_client' => ['enabled' => true]]);
+            $container->loadFromExtension('framework', [
+                'secret' => 'test',
+                'test' => true,
+                'http_client' => ['enabled' => true],
+                // Pin cross-version defaults so Symfony 6.4 and newer exercise identical behavior.
+                'http_method_override' => false,
+                'handle_all_throwables' => true,
+                'php_errors' => ['log' => true],
+                'uid' => ['default_uuid_version' => 7, 'time_based_uuid_version' => 7],
+            ]);
             $container->register('test.fake_provider', FakeAIProvider::class)
                 ->setFactory([TestServiceFactory::class, 'provider']);
             $container->register(TestAgentConsumer::class)
