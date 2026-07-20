@@ -50,13 +50,25 @@ final class TestKernel extends Kernel
             $container->register(TestEmbeddingProvider::class);
             $container->register(TestVectorStore::class);
             $container->register(TestRagLoader::class);
+            $container->register(TestWorkflowNode::class);
+            $container->register(TestApprovalNode::class);
+            $container->register(TestApprovalWorkflow::class)
+                ->setAutowired(true)
+                ->setAutoconfigured(true)
+                ->setPublic(true);
+            $container->register(TestWorkflowConsumer::class)
+                ->setAutowired(true)
+                ->setPublic(true);
             $container->register(TestAsyncConsumer::class)
                 ->setAutowired(true)
                 ->setPublic(true);
             $container->loadFromExtension('framework', [
                 'messenger' => [
                     'transports' => ['ai' => 'sync://'],
-                    'routing' => [\Errogaht\NeuronAiBundle\Async\RunAgentMessage::class => 'ai'],
+                    'routing' => [
+                        \Errogaht\NeuronAiBundle\Async\RunAgentMessage::class => 'ai',
+                        \Errogaht\NeuronAiBundle\Workflow\Async\RunWorkflowMessage::class => 'ai',
+                    ],
                 ],
             ]);
             $container->loadFromExtension('neuron_ai', [
@@ -82,6 +94,19 @@ final class TestKernel extends Kernel
                     ],
                     'pipelines' => [
                         'knowledge' => ['loaders' => [TestRagLoader::class], 'chunk_size' => 1],
+                    ],
+                ],
+                'workflow' => [
+                    'default' => 'approval',
+                    'default_persistence' => 'interruptions',
+                    'persistence' => [
+                        'interruptions' => ['type' => 'memory'],
+                    ],
+                    'workflows' => [
+                        'simple' => [
+                            'class' => TestWorkflow::class,
+                            'nodes' => [TestWorkflowNode::class],
+                        ],
                     ],
                 ],
                 'messenger' => ['enabled' => true],

@@ -11,13 +11,23 @@ use Errogaht\NeuronAiBundle\Async\CacheAgentJobResultStore;
 use Errogaht\NeuronAiBundle\Async\RunAgentMessageHandler;
 use Errogaht\NeuronAiBundle\Command\AgentRunCommand;
 use Errogaht\NeuronAiBundle\Command\AgentStatusCommand;
+use Errogaht\NeuronAiBundle\Command\WorkflowRunCommand;
+use Errogaht\NeuronAiBundle\Command\WorkflowStatusCommand;
 use Errogaht\NeuronAiBundle\Integration\DoctrineMcp\DoctrineMcpToolProvider;
 use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
 use Errogaht\NeuronAiBundle\Rag\EmbeddingProviderRegistry;
 use Errogaht\NeuronAiBundle\Rag\RagIndexer;
 use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
+use Errogaht\NeuronAiBundle\Workflow\Async\AsyncWorkflowDispatcher;
+use Errogaht\NeuronAiBundle\Workflow\Async\CacheWorkflowJobResultStore;
+use Errogaht\NeuronAiBundle\Workflow\Async\RunWorkflowMessageHandler;
+use Errogaht\NeuronAiBundle\Workflow\Async\WorkflowJobResultStoreInterface;
+use Errogaht\NeuronAiBundle\Workflow\PersistenceRegistry;
+use Errogaht\NeuronAiBundle\Workflow\WorkflowFactory;
+use Errogaht\NeuronAiBundle\Workflow\WorkflowRunner;
 use NeuronAI\Agent\AgentInterface;
 use NeuronAI\Providers\AIProviderInterface;
+use NeuronAI\Workflow\WorkflowInterface;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceLocatorArgument;
 use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
@@ -103,6 +113,41 @@ final class NeuronAiExtension extends Extension
             new ServiceLocatorArgument($loaderReferences),
         ]);
 
+        $workflowReferences = [];
+        $workflowComponentReferences = [];
+        foreach ($config['workflow']['workflows'] as $name => $workflowConfig) {
+            $id = 'neuron_ai.workflow.'.$name;
+            $container->setDefinition($id, (new Definition((string) $workflowConfig['class']))
+                ->setAutowired(true)
+                ->setAutoconfigured(true)
+                ->setShared(false));
+            $workflowReferences[$name] = new Reference($id);
+            foreach (array_merge($workflowConfig['nodes'], $workflowConfig['middleware']) as $serviceId) {
+                $workflowComponentReferences[(string) $serviceId] = new Reference((string) $serviceId);
+            }
+        }
+        $persistenceReferences = [];
+        foreach ($config['workflow']['persistence'] as $persistenceConfig) {
+            foreach (['service', 'connection'] as $option) {
+                if (null !== $persistenceConfig[$option]) {
+                    $persistenceReferences[(string) $persistenceConfig[$option]] = new Reference((string) $persistenceConfig[$option]);
+                }
+            }
+        }
+        $container->getDefinition(PersistenceRegistry::class)->setArguments([
+            $config['workflow']['persistence'],
+            new ServiceLocatorArgument($persistenceReferences),
+            $config['workflow']['default_persistence'],
+        ]);
+        $container->getDefinition(WorkflowFactory::class)->setArguments([
+            $config['workflow']['workflows'],
+            new ServiceLocatorArgument($workflowReferences),
+            new ServiceLocatorArgument($workflowComponentReferences),
+            new Reference(PersistenceRegistry::class),
+            new TaggedIteratorArgument('neuron_ai.observer'),
+            $config['workflow']['default'],
+        ]);
+
         $ragComponentReferences = [];
         foreach ($config['agents'] as $agentConfig) {
             if (($agentConfig['rag']['enabled'] ?? false) !== true) {
@@ -146,6 +191,8 @@ final class NeuronAiExtension extends Extension
 
         $asyncServices = $config['messenger']['enabled'] ? ['dispatcher' => new Reference(AsyncAgentDispatcher::class)] : [];
         $container->getDefinition(AgentRunCommand::class)->setArgument(2, new ServiceLocatorArgument($asyncServices));
+        $workflowAsyncServices = $config['messenger']['enabled'] ? ['dispatcher' => new Reference(AsyncWorkflowDispatcher::class)] : [];
+        $container->getDefinition(WorkflowRunCommand::class)->setArgument(2, new ServiceLocatorArgument($workflowAsyncServices));
     }
 
     /** @param array<string, mixed> $config */
@@ -196,12 +243,23 @@ final class NeuronAiExtension extends Extension
                 ->setShared(false));
             $container->registerAliasForArgument($id, AgentInterface::class, $this->argumentName((string) $name, 'agent'));
         }
+        foreach (array_keys($config['workflow']['workflows']) as $name) {
+            $id = 'neuron_ai.configured_workflow.'.$name;
+            $container->setDefinition($id, (new Definition(WorkflowInterface::class))
+                ->setFactory([new Reference(WorkflowFactory::class), 'create'])
+                ->setArguments([$name])
+                ->setShared(false));
+            $container->registerAliasForArgument($id, WorkflowInterface::class, $this->argumentName((string) $name, 'workflow'));
+        }
 
         if (null !== $config['default_provider']) {
             $container->setAlias(AIProviderInterface::class, 'neuron_ai.configured_provider.'.$config['default_provider']);
         }
         if (null !== $config['default_agent']) {
             $container->setAlias(AgentInterface::class, 'neuron_ai.configured_agent.'.$config['default_agent']);
+        }
+        if (null !== $config['workflow']['default']) {
+            $container->setAlias(WorkflowInterface::class, 'neuron_ai.configured_workflow.'.$config['workflow']['default']);
         }
     }
 
@@ -250,6 +308,7 @@ final class NeuronAiExtension extends Extension
             }
         }
         $this->validateRag($config['rag']);
+        $this->validateWorkflow($config['workflow']);
         foreach ($config['agents'] as $name => &$agent) {
             $agent['provider'] ??= $config['default_provider'];
             if (null === $agent['provider'] || !isset($config['providers'][$agent['provider']])) {
@@ -269,6 +328,36 @@ final class NeuronAiExtension extends Extension
             }
         }
         unset($agent);
+    }
+
+    /** @param array<string, mixed> $config */
+    private function validateWorkflow(array &$config): void
+    {
+        if (null !== $config['default_persistence'] && !isset($config['persistence'][$config['default_persistence']])) {
+            throw new InvalidArgumentException(\sprintf('Unknown workflow.default_persistence "%s".', $config['default_persistence']));
+        }
+        foreach ($config['persistence'] as $name => $persistence) {
+            if ('service' === $persistence['type'] && empty($persistence['service'])) {
+                throw new InvalidArgumentException(\sprintf('Workflow persistence "%s" of type service requires the service option.', $name));
+            }
+            if ('file' === $persistence['type'] && empty($persistence['directory'])) {
+                throw new InvalidArgumentException(\sprintf('Workflow persistence "%s" of type file requires the directory option.', $name));
+            }
+            if ('database' === $persistence['type'] && empty($persistence['connection'])) {
+                throw new InvalidArgumentException(\sprintf('Workflow persistence "%s" of type database requires the connection option.', $name));
+            }
+        }
+        foreach ($config['workflows'] as $name => &$workflow) {
+            if (!is_a((string) $workflow['class'], WorkflowInterface::class, true)) {
+                throw new InvalidArgumentException(\sprintf('Workflow class "%s" must implement %s.', $workflow['class'], WorkflowInterface::class));
+            }
+            $workflow['persistence'] ??= $config['default_persistence'];
+            if (null !== $workflow['persistence'] && !isset($config['persistence'][$workflow['persistence']])) {
+                throw new InvalidArgumentException(\sprintf('Workflow "%s" references unknown persistence "%s".', $name, $workflow['persistence']));
+            }
+        }
+        unset($workflow);
+        // Attribute-owned defaults are discovered and validated later by WorkflowServicePass.
     }
 
     /** @param array<string, mixed> $config */
@@ -329,6 +418,22 @@ final class NeuronAiExtension extends Extension
         ]))->addTag('messenger.message_handler'));
         $container->setDefinition(AgentStatusCommand::class, (new Definition(AgentStatusCommand::class, [
             new Reference(\Errogaht\NeuronAiBundle\Async\AgentJobResultStoreInterface::class),
+        ]))->addTag('console.command'));
+        $container->setDefinition(CacheWorkflowJobResultStore::class, new Definition(CacheWorkflowJobResultStore::class, [
+            new Reference((string) $config['result_cache_pool']),
+            (int) $config['result_ttl'],
+        ]));
+        $container->setAlias(WorkflowJobResultStoreInterface::class, CacheWorkflowJobResultStore::class);
+        $container->setDefinition(AsyncWorkflowDispatcher::class, (new Definition(AsyncWorkflowDispatcher::class, [
+            new Reference((string) $config['bus']),
+            new Reference(WorkflowJobResultStoreInterface::class),
+        ]))->setPublic(true));
+        $container->setDefinition(RunWorkflowMessageHandler::class, (new Definition(RunWorkflowMessageHandler::class, [
+            new Reference(WorkflowRunner::class),
+            new Reference(WorkflowJobResultStoreInterface::class),
+        ]))->addTag('messenger.message_handler'));
+        $container->setDefinition(WorkflowStatusCommand::class, (new Definition(WorkflowStatusCommand::class, [
+            new Reference(WorkflowJobResultStoreInterface::class),
         ]))->addTag('console.command'));
     }
 }

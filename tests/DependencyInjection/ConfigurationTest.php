@@ -29,6 +29,8 @@ final class ConfigurationTest extends TestCase
         self::assertSame([], $config['rag']['embeddings']);
         self::assertSame([], $config['rag']['vector_stores']);
         self::assertSame([], $config['rag']['pipelines']);
+        self::assertSame([], $config['workflow']['persistence']);
+        self::assertSame([], $config['workflow']['workflows']);
         self::assertFalse($config['messenger']['enabled']);
     }
 
@@ -77,5 +79,27 @@ final class ConfigurationTest extends TestCase
         self::assertSame(1024, $config['rag']['vector_stores']['knowledge']['dimensions']);
         self::assertSame(50, $config['rag']['pipelines']['docs']['chunk_size']);
         self::assertTrue($config['agents']['knowledge']['rag']['enabled']);
+    }
+
+    public function testWorkflowInfrastructureIsNormalized(): void
+    {
+        // Scenario: YAML selects durable persistence and attaches container-owned nodes to a native Workflow class.
+        $config = (new Processor())->processConfiguration(new Configuration(), [[
+            'workflow' => [
+                'default' => 'orders',
+                'default_persistence' => 'files',
+                'persistence' => [
+                    'files' => ['type' => 'file', 'directory' => '/tmp/workflows'],
+                ],
+                'workflows' => [
+                    'orders' => ['class' => \NeuronAI\Workflow\Workflow::class, 'nodes' => ['app.workflow.receive_order']],
+                ],
+            ],
+        ]]);
+
+        self::assertTrue($config['workflow']['persistence']['files']['create_directory']);
+        self::assertSame('neuron_workflow_', $config['workflow']['persistence']['files']['prefix']);
+        self::assertSame(['app.workflow.receive_order'], $config['workflow']['workflows']['orders']['nodes']);
+        self::assertSame([], $config['workflow']['workflows']['orders']['middleware']);
     }
 }

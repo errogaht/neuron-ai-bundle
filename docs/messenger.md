@@ -1,6 +1,6 @@
 # Messenger integration
 
-Messenger execution is optional and disabled by default. When enabled, the bundle registers a serializable message, handler, dispatcher and PSR-6 result store.
+Messenger execution is optional and disabled by default. When enabled, the bundle registers serializable messages, handlers, dispatchers and PSR-6 result stores for both agents and workflows.
 
 ## Flow
 
@@ -31,6 +31,7 @@ framework:
             ai: '%env(MESSENGER_TRANSPORT_DSN)%'
         routing:
             Errogaht\NeuronAiBundle\Async\RunAgentMessage: ai
+            Errogaht\NeuronAiBundle\Workflow\Async\RunWorkflowMessage: ai
 ```
 
 The cache must be shared between the web process and workers. `cache.adapter.array` is unsuitable outside tests.
@@ -50,9 +51,26 @@ $status = $results->get($jobId);
 
 Possible statuses are `queued`, `running`, `succeeded` and `failed`.
 
+## Workflow dispatch
+
+```php
+use Errogaht\NeuronAiBundle\Workflow\Async\AsyncWorkflowDispatcher;
+use Errogaht\NeuronAiBundle\Workflow\Async\WorkflowJobResultStoreInterface;
+
+$jobId = $workflowDispatcher->dispatch('order_processing', [
+    'order_id' => 'order-42',
+]);
+
+$status = $workflowResults->get($jobId);
+```
+
+Workflow jobs additionally use `completed` or `interrupted` as their terminal status. An interrupted result contains the workflow ID and the public JSON representation of its request. The bundle does not deserialize approval input automatically: validate it in application code, rebuild the concrete `InterruptRequest`, authorize the workflow record, and call `WorkflowRunner::resume()`.
+
+The generic `RunWorkflowMessage` supports the default `StartEvent` and array state. Use an application message/handler for custom start Events or queued resume operations so the domain owns serializer metadata and authorization.
+
 ## Retries and idempotency
 
-Failures are rethrown so the application's Messenger retry strategy remains authoritative. A retry runs the agent again and overwrites the same job status. Tools that cause side effects must implement their own idempotency key or transaction boundary.
+Failures are rethrown so the application's Messenger retry strategy remains authoritative. A retry runs the agent or workflow again and overwrites the same job status. Tools and nodes that cause side effects must implement their own idempotency key or transaction boundary.
 
 ## Sensitive data
 

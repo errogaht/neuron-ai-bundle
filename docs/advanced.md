@@ -99,7 +99,13 @@ Retrieval, pre-processors, post-processors, splitters, readers and application d
 
 ## Workflows and persistence
 
-Neuron workflows that are not agents are ordinary services and do not need the agent factory. Autowire their nodes, middleware and persistence implementation directly. Agent subclasses can receive a persistence factory in the constructor or attach request-specific persistence in a configurator.
+Use `#[AsNeuronWorkflow]` for a class-owned graph or `neuron_ai.workflow.workflows` when Symfony configuration should append node and middleware services. `WorkflowFactory` always returns a fresh graph, `WorkflowRunner` normalizes completed/interrupted outcomes and exposes native event streaming, and `PersistenceRegistry` deliberately shares only the backend needed by a later resume operation.
+
+The generic runner accepts `WorkflowState` and an optional custom start `Event`. Resume requires the same configured workflow name, the persisted workflow ID, and a concrete `InterruptRequest` reconstructed from validated application input. Store that workflow name/ID pair against an authorized domain record; a resume token is not proof that the caller may approve the operation.
+
+`memory`, `file`, `database`, and custom-service persistence are available through YAML. Neuron's file/database implementations serialize PHP objects. Keep storage private and use a custom `PersistenceInterface` when the application needs encryption, platform-specific SQL, tenant partitioning, locking, or stricter deserialization control.
+
+The optional `RunWorkflowMessage` carries only a workflow name and array state so common Messenger transports can serialize it. Custom start Events and `InterruptRequest` subclasses belong in application-owned message classes because their validation and serializer mapping are domain-specific.
 
 ## MCP
 

@@ -11,6 +11,7 @@ All configuration lives under `neuron_ai`.
 | `providers` | map | `{}` | Named provider definitions |
 | `agents` | map | `{}` | Named agent definitions |
 | `rag` | map | empty | Named embeddings, vector stores and ingestion pipelines |
+| `workflow` | map | empty | Named workflows and shared interruption persistence |
 | `messenger` | map | disabled | Optional async execution |
 
 Unknown defaults and missing agent providers fail during container compilation.
@@ -186,6 +187,64 @@ php bin/console neuron-ai:rag:index docs --reindex
 
 The reindex option deletes existing documents for every returned `sourceType/sourceName` pair before adding new chunks. It does not delete unrelated sources.
 
+## Workflows
+
+```yaml
+neuron_ai:
+    workflow:
+        default: order_processing
+        default_persistence: durable
+        persistence:
+            durable:
+                type: file
+                directory: '%kernel.project_dir%/var/neuron/workflows'
+                prefix: order_
+                extension: .store
+                create_directory: true
+        workflows:
+            order_processing:
+                class: App\Ai\Workflow\OrderProcessingWorkflow
+                persistence: durable
+                nodes:
+                    - App\Ai\Workflow\Node\ReceiveOrder
+                    - App\Ai\Workflow\Node\ApproveOrder
+                middleware:
+                    - App\Ai\Workflow\AuditMiddleware
+```
+
+### Workflow options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `default` | `null` | Workflow used by unqualified `WorkflowInterface` and `WorkflowRunner::run()` |
+| `default_persistence` | `null` | Persistence inherited by workflow definitions without an override |
+| `persistence` | `{}` | Named shared persistence backends |
+| `workflows` | `{}` | Named non-shared Workflow definitions |
+
+Each workflow definition accepts:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `class` | required | Autowired class implementing `WorkflowInterface` |
+| `persistence` | workflow default | Named persistence backend; required for cross-instance resume |
+| `nodes` | `[]` | `NodeInterface` service IDs appended to the class graph as isolated clones |
+| `middleware` | `[]` | `WorkflowMiddleware` service IDs applied globally as isolated clones |
+
+Workflow `order_processing` autowires into `WorkflowInterface $orderProcessingWorkflow`. Every injection/factory call returns a fresh Workflow instance. Use `#[AsNeuronWorkflow('order_processing', persistence: 'durable')]` instead of a YAML definition when the class owns its graph.
+
+### Persistence options
+
+| Type | Required options | Optional options |
+| --- | --- | --- |
+| `memory` | none | none; same-process resume only |
+| `file` | `directory` | `prefix`, `extension`, `create_directory` |
+| `database` | `connection` | `table`; connection must be PDO or expose `getNativeConnection(): PDO` |
+| `service` | `service` | custom service implementing `PersistenceInterface` |
+
+The default file prefix is `neuron_workflow_`, the default extension is `.store`, and missing directories are created by default. The database table name is restricted to an unquoted SQL identifier because Neuron interpolates it into its statements.
+
+Persistence backends are intentionally shared; workflows, autoconfigured nodes, and autoconfigured middleware are non-shared. YAML-attached components are also cloned before each run. A resume token without configured persistence fails before execution. Manually configured node/middleware services should follow the same non-shared boundary.
+
 Named aliases are generated as follows:
 
 | Configuration key | Autowired argument |
@@ -193,6 +252,7 @@ Named aliases are generated as follows:
 | provider `main` | `AIProviderInterface $mainProvider` |
 | agent `support` | `AgentInterface $supportAgent` |
 | agent `order_manager` | `AgentInterface $orderManagerAgent` |
+| workflow `order_processing` | `WorkflowInterface $orderProcessingWorkflow` |
 
 ## Messenger
 

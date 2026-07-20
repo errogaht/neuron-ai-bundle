@@ -1,6 +1,6 @@
 # Neuron AI Bundle
 
-Symfony-native integration for [Neuron AI](https://docs.neuron-ai.dev/): configure providers and agents in YAML, inject them through autowiring, attach ordinary Symfony services or a configured Doctrine MCP server as tools, and optionally run agents through Messenger.
+Symfony-native integration for [Neuron AI](https://docs.neuron-ai.dev/): configure providers, agents, RAG and workflow infrastructure in YAML, inject named runtimes through autowiring, attach ordinary Symfony services or a configured Doctrine MCP server as tools, and optionally run agents or workflows through Messenger.
 
 The bundle does not replace Neuron AI. It removes repetitive construction and configuration while leaving the complete Neuron API available for streaming, structured output, RAG, workflows, persistence, human-in-the-loop, MCP and observability.
 
@@ -92,7 +92,7 @@ $text = $result->content();
 
 ## Named autowiring
 
-Each configured provider and agent becomes a non-shared service. The key is converted to Symfony's named-autowiring convention:
+Each configured provider, agent, workflow, embedding provider, and vector store receives a Symfony named-autowiring alias. Stateful agents, workflows, and vector-search filters are isolated according to their runtime boundary:
 
 ```yaml
 neuron_ai:
@@ -510,6 +510,139 @@ For YAML-owned RAG agents, `rag.pre_processors`, `rag.post_processors`, and `rag
 
 Metadata filters are part of the authorization boundary. Derive tenant/user filters from trusted Symfony security context, never from model arguments, and apply them before similarity search. A vector database must not become a cross-tenant side channel.
 
+## Workflows, persistence, and human-in-the-loop
+
+Neuron workflows keep their typed node/event graph in PHP. Symfony owns construction, named discovery, persistence, middleware, observers, lifecycle events, console execution, and optional Messenger dispatch:
+
+```yaml
+# config/packages/neuron_ai.yaml
+neuron_ai:
+    workflow:
+        default: order_processing
+        default_persistence: workflow_files
+
+        persistence:
+            workflow_files:
+                type: file
+                directory: '%kernel.project_dir%/var/neuron/workflows'
+
+        workflows:
+            order_processing:
+                class: App\Ai\Workflow\OrderProcessingWorkflow
+                nodes:
+                    - App\Ai\Workflow\Node\ReceiveOrder
+                    - App\Ai\Workflow\Node\ApproveOrder
+                    - App\Ai\Workflow\Node\CompleteOrder
+                middleware:
+                    - App\Ai\Workflow\AuditMiddleware
+```
+
+Configured Workflow, Node, and middleware classes are ordinary autowired services. The factory returns a new Workflow and cloned node/middleware instances for every execution; only the persistence backend is deliberately shared so a later request or worker can resume an interruption.
+
+Named autowiring follows Symfony's argument convention:
+
+```php
+use NeuronAI\Workflow\WorkflowInterface;
+
+final class OrderController
+{
+    public function __construct(private WorkflowInterface $orderProcessingWorkflow)
+    {
+    }
+}
+```
+
+### Class-first workflow
+
+Keep graphs that inject agents or domain services entirely in their class:
+
+```php
+<?php
+
+namespace App\Ai\Workflow;
+
+use Errogaht\NeuronAiBundle\Workflow\Attribute\AsNeuronWorkflow;
+use NeuronAI\Workflow\Workflow;
+
+#[AsNeuronWorkflow('order_processing', persistence: 'workflow_files')]
+final class OrderProcessingWorkflow extends Workflow
+{
+    public function __construct(
+        private readonly Node\ReceiveOrder $receive,
+        private readonly Node\ApproveOrder $approve,
+        private readonly Node\CompleteOrder $complete,
+    ) {
+        parent::__construct();
+    }
+
+    protected function nodes(): array
+    {
+        return [$this->receive, $this->approve, $this->complete];
+    }
+}
+```
+
+No `workflow.workflows` entry is required for an attributed class. Use `WorkflowRunner`, `WorkflowFactory`, or named `WorkflowInterface` autowiring when the attribute's persistence and global observers must be applied. Direct concrete-class injection intentionally returns the native class-owned service without factory configuration.
+
+### Run, stream, interrupt, and resume
+
+```php
+use Errogaht\NeuronAiBundle\Workflow\WorkflowRunner;
+use NeuronAI\Workflow\WorkflowState;
+
+$result = $runner->run(
+    'order_processing',
+    new WorkflowState(['order_id' => 'order-42']),
+);
+
+if ($result->isInterrupted()) {
+    // Store workflow + workflowId against an authenticated application record.
+    $request = $result->interrupt;
+}
+```
+
+Streaming yields Neuron's native events and returns the normalized result from the Generator:
+
+```php
+$stream = $runner->stream('order_processing', new WorkflowState(['order_id' => 'order-42']));
+foreach ($stream as $event) {
+    // Forward to Mercure, SSE, WebSocket, or a StreamedResponse.
+}
+$result = $stream->getReturn();
+```
+
+After the application validates human feedback and reconstructs the concrete `InterruptRequest`, resume through a fresh workflow instance:
+
+```php
+$request = ApprovalRequest::fromArray($validatedPayload);
+$result = $runner->resume('order_processing', $workflowId, $request);
+```
+
+The runner dispatches `WorkflowRunStarted`, `WorkflowRunCompleted`, `WorkflowRunInterrupted`, and `WorkflowRunFailed`. It logs identifiers, duration, and exception metadata, never workflow state by default.
+
+### Persistence backends
+
+| Type | Configuration | Intended use |
+| --- | --- | --- |
+| `memory` | none | Tests and resume inside one PHP process only |
+| `file` | `directory`; optional `prefix`, `extension`, `create_directory` | Single-host development or workers sharing a protected filesystem |
+| `database` | `connection`, optional `table` | A PDO service or Doctrine DBAL connection whose native connection is PDO |
+| `service` | `service` | Any custom Neuron `PersistenceInterface`, including platform-specific storage |
+
+For PostgreSQL, distributed locks, encryption, tenant partitioning, or a custom schema, prefer `type: service`. The built-in database adapter follows the SQL behavior of the installed Neuron version.
+
+File and database persistence serialize workflow state, nodes, events, and interrupt requests. Never use a public directory, keep secrets out of state, restrict permitted classes when crossing trust boundaries, and treat resume tokens as application credentials. Always resolve the workflow name and token from an authorized server-side record instead of accepting an arbitrary pair from a client. The runner accepts only portable alphanumeric, underscore, and hyphen tokens, preventing path syntax from reaching file persistence.
+
+### Workflow console and Messenger
+
+```bash
+php bin/console neuron-ai:workflow:run order_processing --state='{"order_id":"order-42"}'
+php bin/console neuron-ai:workflow:run order_processing --state='{"order_id":"order-42"}' --async
+php bin/console neuron-ai:workflow:status "$JOB_ID"
+```
+
+The generic Messenger message starts workflows using the default `StartEvent` and JSON-safe state. Custom start Events and resume requests are application types, so dispatch those through an application-owned Messenger message and call `WorkflowRunner` in its handler.
+
 ## Custom agents and all Neuron features
 
 For configuration-owned agents, set `class` in YAML. Symfony autowires its constructor, then the bundle applies the configured provider, instructions, tools, configurators and observers:
@@ -535,7 +668,7 @@ foreach ($analystAgent->stream(new UserMessage($prompt)) as $chunk) {
 $dto = $analystAgent->structured(new UserMessage($prompt), InvoiceDraft::class);
 ```
 
-RAG agents, workflow subclasses, persistence, MCP connectors and custom middleware remain ordinary Symfony services. Inject their dependencies in the constructor and select the class in `neuron_ai.agents`. See [Advanced integration](docs/advanced.md).
+RAG agents, workflow subclasses, persistence, MCP connectors and custom middleware remain ordinary Symfony services. Inject their dependencies in the constructor and select the class in `neuron_ai.agents` or `neuron_ai.workflow.workflows`. See [Advanced integration](docs/advanced.md).
 
 ## Request-specific configuration
 
@@ -572,6 +705,9 @@ php bin/console neuron-ai:models main
 
 # Smoke-test an agent
 php bin/console neuron-ai:run --agent=assistant 'Say hello'
+
+# Run a named workflow with initial state
+php bin/console neuron-ai:workflow:run order_processing --state='{"order_id":"order-42"}'
 ```
 
 `neuron-ai:models` understands OpenAI-compatible `data[].id`, Ollama `models[].name`, and configurable model-list paths.
@@ -600,12 +736,16 @@ framework:
             async: '%env(MESSENGER_TRANSPORT_DSN)%'
         routing:
             Errogaht\NeuronAiBundle\Async\RunAgentMessage: async
+            Errogaht\NeuronAiBundle\Workflow\Async\RunWorkflowMessage: async
 ```
 
 ```php
 use Errogaht\NeuronAiBundle\Async\AsyncAgentDispatcher;
 
 $jobId = $dispatcher->dispatch('assistant', 'Prepare the report', threadId: 'report-42');
+
+// AsyncWorkflowDispatcher uses the same bus/cache configuration.
+$workflowJobId = $workflowDispatcher->dispatch('order_processing', ['order_id' => 'order-42']);
 ```
 
 Run the worker and inspect the cache-backed result:
@@ -639,6 +779,10 @@ The runner dispatches:
 - `AgentRunStarted`
 - `AgentRunCompleted`
 - `AgentRunFailed`
+- `WorkflowRunStarted`
+- `WorkflowRunCompleted`
+- `WorkflowRunInterrupted`
+- `WorkflowRunFailed`
 
 Implement Neuron's `ObserverInterface` as an autoconfigured Symfony service to receive native Neuron events. The bundle deliberately logs metadata only and does not log prompts or responses by default.
 

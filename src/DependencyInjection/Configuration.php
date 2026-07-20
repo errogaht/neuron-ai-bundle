@@ -23,6 +23,33 @@ final class Configuration implements ConfigurationInterface
         $children->scalarNode('default_provider')->defaultNull();
         $children->scalarNode('default_agent')->defaultNull();
 
+        $workflow = $children->arrayNode('workflow')->addDefaultsIfNotSet();
+        $workflowChildren = $workflow->children();
+        $workflowChildren->scalarNode('default')->defaultNull();
+        $workflowChildren->scalarNode('default_persistence')->defaultNull();
+
+        $persistence = $workflowChildren->arrayNode('persistence')->useAttributeAsKey('name')->arrayPrototype();
+        $persistenceDefinition = $persistence->children();
+        $persistenceDefinition->enumNode('type')->values(['memory', 'file', 'database', 'service'])->defaultValue('memory');
+        $persistenceDefinition->scalarNode('service')->defaultNull();
+        $persistenceDefinition->scalarNode('directory')->defaultNull();
+        $persistenceDefinition->scalarNode('prefix')->defaultValue('neuron_workflow_');
+        $persistenceDefinition->scalarNode('extension')->defaultValue('.store');
+        $persistenceDefinition->booleanNode('create_directory')->defaultTrue();
+        $persistenceDefinition->scalarNode('connection')->defaultNull();
+        $persistenceDefinition->scalarNode('table')->defaultValue('workflow_interrupts');
+
+        $workflows = $workflowChildren->arrayNode('workflows')->useAttributeAsKey('name')->arrayPrototype();
+        $workflowDefinition = $workflows->children();
+        $workflowDefinition->scalarNode('class')->isRequired()->cannotBeEmpty();
+        $workflowDefinition->scalarNode('persistence')->defaultNull();
+        $workflowNodes = $workflowDefinition->arrayNode('nodes');
+        $workflowNodes->scalarPrototype();
+        $workflowNodes->defaultValue([]);
+        $workflowMiddleware = $workflowDefinition->arrayNode('middleware');
+        $workflowMiddleware->scalarPrototype();
+        $workflowMiddleware->defaultValue([]);
+
         $rag = $children->arrayNode('rag')->addDefaultsIfNotSet();
         $ragChildren = $rag->children();
         $ragChildren->scalarNode('default_embeddings')->defaultNull();

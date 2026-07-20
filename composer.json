@@ -1,7 +1,7 @@
 {
     "name": "errogaht/neuron-ai-bundle",
     "description": "Symfony integration for Neuron AI agents, providers, tools, workflows and Messenger jobs.",
-    "keywords": ["ai", "agents", "neuron-ai", "symfony", "symfony-bundle"],
+    "keywords": ["ai", "agents", "neuron-ai", "rag", "symfony", "symfony-bundle", "vector-store", "workflow"],
     "homepage": "https://github.com/errogaht/neuron-ai-bundle",
     "type": "symfony-bundle",
     "license": "MIT",
@@ -31,7 +31,7 @@
     },
     "suggest": {
         "errogaht/doctrine-mcp-bundle": "Attach the application's configured Doctrine MCP server directly to Neuron agents without HTTP.",
-        "symfony/messenger": "Dispatch Neuron agents to async transports and persist their results."
+        "symfony/messenger": "Dispatch Neuron agents and workflows to async transports and persist their results."
     },
     "autoload": {"psr-4": {"Errogaht\\NeuronAiBundle\\": "src/"}},
     "autoload-dev": {"psr-4": {"Errogaht\\NeuronAiBundle\\Tests\\": "tests/"}},

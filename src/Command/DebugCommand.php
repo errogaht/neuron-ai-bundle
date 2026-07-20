@@ -9,6 +9,8 @@ use Errogaht\NeuronAiBundle\Provider\ProviderRegistry;
 use Errogaht\NeuronAiBundle\Rag\EmbeddingProviderRegistry;
 use Errogaht\NeuronAiBundle\Rag\RagIndexer;
 use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
+use Errogaht\NeuronAiBundle\Workflow\PersistenceRegistry;
+use Errogaht\NeuronAiBundle\Workflow\WorkflowFactory;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -16,7 +18,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
 /** Shows the compiled integration surface while ensuring provider credentials are redacted. */
-#[AsCommand(name: 'neuron-ai:debug', description: 'Show configured Neuron AI providers and agents')]
+#[AsCommand(name: 'neuron-ai:debug', description: 'Show configured Neuron AI providers, agents, RAG, and workflows')]
 final class DebugCommand extends Command
 {
     public function __construct(
@@ -25,6 +27,8 @@ final class DebugCommand extends Command
         private readonly EmbeddingProviderRegistry $embeddings,
         private readonly VectorStoreRegistry $vectorStores,
         private readonly RagIndexer $indexer,
+        private readonly WorkflowFactory $workflows,
+        private readonly PersistenceRegistry $persistence,
     ) {
         parent::__construct();
     }
@@ -59,6 +63,16 @@ final class DebugCommand extends Command
             }, $this->vectorStores->names()),
         );
         $io->writeln('Pipelines: '.([] === $this->indexer->names() ? '(none)' : implode(', ', $this->indexer->names())));
+        $io->section('Workflows');
+        $io->listing($this->workflows->names());
+        $io->table(
+            ['Persistence', 'Type'],
+            array_map(function (string $name): array {
+                $config = $this->persistence->describe($name);
+
+                return [$name, (string) $config['type']];
+            }, $this->persistence->names()),
+        );
 
         return Command::SUCCESS;
     }
