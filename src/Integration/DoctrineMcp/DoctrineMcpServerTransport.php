@@ -27,7 +27,8 @@ final class DoctrineMcpServerTransport extends BaseTransport
         $this->request = $request;
     }
 
-    public function listen(): null
+    /** @return null */
+    public function listen(): mixed
     {
         if (null === $this->request) {
             throw new \LogicException('The Doctrine MCP loopback server has no request to process.');
