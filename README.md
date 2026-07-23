@@ -90,6 +90,28 @@ $result = $runner->chat('assistant', 'Summarize this order.', threadId: 'order-4
 $text = $result->content();
 ```
 
+For low-latency HTTP or console output, consume typed Neuron stream chunks and
+read the normalized final result from the generator return value:
+
+```php
+use NeuronAI\Chat\Messages\Stream\Chunks\TextChunk;
+
+$stream = $runner->stream('assistant', 'Summarize this order.', threadId: 'order-42');
+foreach ($stream as $chunk) {
+    // Expose only chunk types appropriate for the client boundary. Tool and
+    // reasoning chunks may contain implementation details or sensitive data.
+    if ($chunk instanceof TextChunk) {
+        echo $chunk->content;
+    }
+}
+
+$result = $stream->getReturn();
+```
+
+The generator must be consumed to completion. `stream()` uses the same fresh
+agent factory, tool loop, completion/failure events and normalized
+`AgentRunResult` contract as `chat()`.
+
 ## Named autowiring
 
 Each configured provider, agent, workflow, embedding provider, and vector store receives a Symfony named-autowiring alias. Stateful agents, workflows, and vector-search filters are isolated according to their runtime boundary:

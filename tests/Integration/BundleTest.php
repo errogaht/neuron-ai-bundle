@@ -10,6 +10,7 @@ use Errogaht\NeuronAiBundle\Rag\RagIndexer;
 use Errogaht\NeuronAiBundle\Rag\VectorStoreRegistry;
 use Errogaht\NeuronAiBundle\Workflow\WorkflowFactory;
 use Errogaht\NeuronAiBundle\Workflow\WorkflowRunner;
+use NeuronAI\Chat\Messages\Stream\Chunks\TextChunk;
 use NeuronAI\RAG\RAG;
 use NeuronAI\Tools\ToolInterface;
 use NeuronAI\Workflow\Interrupt\ApprovalRequest;
@@ -32,6 +33,18 @@ final class BundleTest extends KernelTestCase
         $runner = $kernel->getContainer()->get(AgentRunner::class);
         self::assertInstanceOf(AgentRunner::class, $runner);
         self::assertSame('Bundle response', $runner->chat('assistant', 'Hello')->content());
+
+        // Scenario: an HTTP consumer renders text immediately while retaining
+        // the same normalized final result needed for persistence and events.
+        $stream = $runner->stream('assistant', 'Hello as a stream');
+        $streamedText = '';
+        foreach ($stream as $chunk) {
+            if ($chunk instanceof TextChunk) {
+                $streamedText .= $chunk->content;
+            }
+        }
+        self::assertSame('Bundle response', $streamedText);
+        self::assertSame('Bundle response', $stream->getReturn()->content());
 
         $factory = $kernel->getContainer()->get(AgentFactory::class);
         if (!$factory instanceof AgentFactory) {
