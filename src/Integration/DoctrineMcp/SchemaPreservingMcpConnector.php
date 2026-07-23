@@ -25,9 +25,34 @@ final class SchemaPreservingMcpConnector extends McpConnector
         $inputSchema = $item['inputSchema'] ?? null;
 
         if ($tool instanceof Tool && \is_array($inputSchema)) {
-            $tool->setParameters(['parameters' => $inputSchema]);
+            $tool->setParameters(['parameters' => $this->providerSchema($inputSchema)]);
         }
 
         return $tool;
+    }
+
+    /**
+     * OpenAI-compatible providers require an empty JSON Schema properties map
+     * to be encoded as an object (`{}`), while PHP otherwise serializes it as
+     * an array (`[]`) and the provider rejects the complete tool collection.
+     *
+     * @param array<string|int, mixed> $schema
+     *
+     * @return array<string|int, mixed>
+     */
+    private function providerSchema(array $schema): array
+    {
+        foreach ($schema as $key => $value) {
+            if ('properties' === $key && [] === $value) {
+                $schema[$key] = new \stdClass();
+                continue;
+            }
+
+            if (\is_array($value)) {
+                $schema[$key] = $this->providerSchema($value);
+            }
+        }
+
+        return $schema;
     }
 }

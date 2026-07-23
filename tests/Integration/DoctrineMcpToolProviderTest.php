@@ -19,7 +19,7 @@ final class DoctrineMcpToolProviderTest extends TestCase
 
         $tools = $provider->tools();
 
-        self::assertCount(3, $tools);
+        self::assertCount(4, $tools);
         self::assertSame('doctrine_get', $tools[0]->getName());
         $tools[0]->setInputs(['entity' => 'Order'])->execute();
         self::assertStringContainsString('Order', $tools[0]->getResult());
@@ -69,6 +69,18 @@ final class DoctrineMcpToolProviderTest extends TestCase
         );
     }
 
+    public function testEmptyPropertiesAreEncodedAsJsonObject(): void
+    {
+        // Scenario: a context tool has no arguments, and one empty PHP array must not make the provider reject every attached tool.
+        $provider = new DoctrineMcpToolProvider($this->server());
+
+        $tools = $provider->tools(only: ['current_context']);
+        $payload = (new ToolMapper())->map($tools);
+
+        self::assertInstanceOf(\stdClass::class, $payload[0]['function']['parameters']['properties']);
+        self::assertStringContainsString('"properties":{}', json_encode($payload, \JSON_THROW_ON_ERROR));
+    }
+
     private function server(): Server
     {
         $schema = [
@@ -116,6 +128,12 @@ final class DoctrineMcpToolProviderTest extends TestCase
                 'plan_create',
                 description: 'Create an aggregate plan.',
                 inputSchema: $planSchema,
+            )
+            ->addTool(
+                static fn (): array => ['context' => 'self'],
+                'current_context',
+                description: 'Read current context.',
+                inputSchema: ['type' => 'object', 'properties' => [], 'required' => []],
             )
             ->build();
     }
